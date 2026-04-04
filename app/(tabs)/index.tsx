@@ -39,6 +39,7 @@ export default function FeedScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [useMock, setUseMock] = useState(false);
+  const [filter, setFilter] = useState<'latest' | 'hot'>('latest');
 
   // DEBUG: Log auth state
   useEffect(() => {
@@ -60,17 +61,35 @@ export default function FeedScreen() {
 
     if (error || !data) {
       setUseMock(true);
-      setPosts(MOCK_POSTS);
+      const sortedMock = sortPosts(MOCK_POSTS, filter);
+      setPosts(sortedMock);
     } else if (data.length === 0) {
       setUseMock(true);
-      setPosts(MOCK_POSTS);
+      const sortedMock = sortPosts(MOCK_POSTS, filter);
+      setPosts(sortedMock);
     } else {
       setUseMock(false);
-      setPosts(data.map(mapDbPost));
+      const mappedPosts = data.map(mapDbPost);
+      const sortedPosts = sortPosts(mappedPosts, filter);
+      setPosts(sortedPosts);
     }
     setIsLoading(false);
     setRefreshing(false);
-  }, []);
+  }, [filter]);
+
+  // Helper function to sort posts based on filter
+  const sortPosts = (postsToSort: Post[], sortFilter: 'latest' | 'hot'): Post[] => {
+    if (sortFilter === 'hot') {
+      // Sort by total votes (yes + no) in descending order
+      return [...postsToSort].sort((a, b) => {
+        const aTotal = a.yesCount + a.noCount;
+        const bTotal = b.yesCount + b.noCount;
+        return bTotal - aTotal;
+      });
+    }
+    // Latest: already sorted by created_at descending from the query
+    return postsToSort;
+  };
 
   useEffect(() => { loadPosts(); }, [loadPosts]);
 
@@ -108,6 +127,43 @@ export default function FeedScreen() {
             <Text style={styles.signInText}>Sign in</Text>
           </TouchableOpacity>
         )}
+      </View>
+
+      {/* Filter Buttons */}
+      <View style={styles.filterContainer}>
+        <TouchableOpacity
+          style={[
+            styles.filterBtn,
+            filter === 'latest' && styles.filterBtnActive,
+          ]}
+          onPress={() => setFilter('latest')}
+        >
+          <Text
+            style={[
+              styles.filterBtnText,
+              filter === 'latest' && styles.filterBtnTextActive,
+            ]}
+          >
+            Latest
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.filterBtn,
+            filter === 'hot' && styles.filterBtnActive,
+          ]}
+          onPress={() => setFilter('hot')}
+        >
+          <Text
+            style={[
+              styles.filterBtnText,
+              filter === 'hot' && styles.filterBtnTextActive,
+            ]}
+          >
+            🔥 Hot
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {isLoading ? (
@@ -149,6 +205,41 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.brandLight, alignItems: 'center', justifyContent: 'center',
   },
   avatarText: { color: Colors.brand, fontWeight: '700', fontSize: 15 },
+  
+  // Filter styles
+  filterContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 8,
+    backgroundColor: Colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  filterBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterBtnActive: {
+    backgroundColor: Colors.brand,
+    borderColor: Colors.brand,
+  },
+  filterBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  filterBtnTextActive: {
+    color: '#fff',
+  },
+
   list: { padding: 16, paddingBottom: 32 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, marginTop: 60 },
   emptyText: { color: Colors.textTertiary, fontSize: 15, textAlign: 'center' },
