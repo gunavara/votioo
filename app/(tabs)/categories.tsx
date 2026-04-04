@@ -1,16 +1,29 @@
+import { Ionicons } from '@expo/vector-icons';
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  FlatList,
-  TouchableOpacity,
-  ScrollView,
+    FlatList,
+    SafeAreaView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
-import { Colors, Radius, Shadow } from '../../constants/theme';
-import { CATEGORIES, MOCK_POSTS } from '../../constants/mockData';
 import PostCard from '../../components/PostCard';
+import { CATEGORIES, MOCK_POSTS } from '../../constants/mockData';
+import { Colors, Radius } from '../../constants/theme';
+
+// Unique color palette for each category
+const CATEGORY_COLORS: { [key: string]: string } = {
+  Shopping: '#EC4899',    // Pink
+  Tech: '#3B82F6',        // Blue
+  Fashion: '#F59E0B',     // Amber
+  Food: '#EF4444',        // Red
+  Travel: '#10B981',      // Emerald
+  Relationships: '#F43F5E', // Rose
+  Lifestyle: '#8B5CF6',   // Violet
+  Home: '#F97316',        // Orange
+  Other: '#6366F1',       // Indigo
+};
 
 export default function CategoriesScreen() {
   const [selected, setSelected] = useState<string | null>(null);
@@ -19,56 +32,50 @@ export default function CategoriesScreen() {
     ? MOCK_POSTS.filter((p) => p.categories.includes(selected as any))
     : MOCK_POSTS;
 
+  const categoryColor = selected 
+    ? (CATEGORY_COLORS[selected] || Colors.brand) 
+    : Colors.brand;
+
   return (
     <SafeAreaView style={styles.safe}>
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Categories</Text>
+        {selected ? (
+          <>
+            <TouchableOpacity
+              onPress={() => setSelected(null)}
+              style={styles.backButton}
+            >
+              <Ionicons name="chevron-back" size={24} color={categoryColor} />
+            </TouchableOpacity>
+            <Text style={[styles.title, { color: categoryColor }]}>#{selected}</Text>
+            <View style={{ width: 24 }} />
+          </>
+        ) : (
+          <Text style={styles.title}>Categories</Text>
+        )}
       </View>
 
-      {/* Category chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chipsRow}
-      >
-        <TouchableOpacity
-          style={[styles.chip, !selected && styles.chipActive]}
-          onPress={() => setSelected(null)}
-        >
-          <Text style={[styles.chipText, !selected && styles.chipTextActive]}>All</Text>
-        </TouchableOpacity>
-        {CATEGORIES.map((cat) => (
-          <TouchableOpacity
-            key={cat.name}
-            style={[styles.chip, selected === cat.name && styles.chipActive]}
-            onPress={() => setSelected(cat.name === selected ? null : cat.name)}
-          >
-            <Text style={styles.chipEmoji}>{cat.emoji}</Text>
-            <Text style={[styles.chipText, selected === cat.name && styles.chipTextActive]}>
-              {cat.name}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      {/* Category grid (when no selection) */}
-      {!selected && (
-        <View style={styles.grid}>
-          {CATEGORIES.map((cat) => (
-            <TouchableOpacity
-              key={cat.name}
-              style={styles.gridCard}
-              onPress={() => setSelected(cat.name)}
-            >
-              <Text style={styles.gridEmoji}>{cat.emoji}</Text>
-              <Text style={styles.gridName}>{cat.name}</Text>
-            </TouchableOpacity>
-          ))}
+      {/* Show chips or posts based on selection */}
+      {!selected ? (
+        <View style={styles.chipsContainer}>
+          <View style={styles.chipsGrid}>
+            {CATEGORIES.map((cat) => {
+              const color = CATEGORY_COLORS[cat.name] || Colors.brand;
+              return (
+                <TouchableOpacity
+                  key={cat.name}
+                  style={[styles.hashtagChip, { borderColor: color }]}
+                  onPress={() => setSelected(cat.name)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.hashtagText, { color }]}>#{cat.name}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
-      )}
-
-      {/* Posts for selected category */}
-      {selected && (
+      ) : (
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id}
@@ -77,7 +84,8 @@ export default function CategoriesScreen() {
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyText}>No posts in this category yet.</Text>
+              <Text style={styles.emptyText}>No posts in #{selected} yet.</Text>
+              <Text style={styles.emptySubtext}>Be the first to ask something!</Text>
             </View>
           }
         />
@@ -92,72 +100,48 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 14,
     backgroundColor: Colors.card,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
+  backButton: {
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   title: {
-    fontSize: 22,
+    fontSize: 28,
     fontWeight: '800',
     color: Colors.text,
   },
-  chipsRow: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 8,
+  chipsContainer: {
+    paddingHorizontal: 12,
+    paddingVertical: 20,
   },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.card,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-  },
-  chipActive: {
-    backgroundColor: Colors.brand,
-    borderColor: Colors.brand,
-  },
-  chipEmoji: {
-    fontSize: 14,
-  },
-  chipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.textSecondary,
-  },
-  chipTextActive: {
-    color: '#fff',
-  },
-  grid: {
+  chipsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    padding: 12,
-    gap: 10,
+    gap: 12,
+    justifyContent: 'flex-start',
   },
-  gridCard: {
-    width: '46%',
-    marginHorizontal: '2%',
+  hashtagChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: Radius.full,
     backgroundColor: Colors.card,
-    borderRadius: Radius.lg,
-    padding: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...Shadow.card,
+    borderWidth: 2,
+    marginBottom: 4,
   },
-  gridEmoji: {
-    fontSize: 36,
-    marginBottom: 8,
-  },
-  gridName: {
+  hashtagText: {
     fontSize: 15,
-    fontWeight: '700',
-    color: Colors.text,
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
   list: {
     padding: 16,
@@ -166,9 +150,16 @@ const styles = StyleSheet.create({
   empty: {
     padding: 32,
     alignItems: 'center',
+    marginTop: 60,
   },
   emptyText: {
+    color: Colors.text,
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  emptySubtext: {
     color: Colors.textTertiary,
-    fontSize: 15,
+    fontSize: 14,
   },
 });
