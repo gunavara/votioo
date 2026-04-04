@@ -1,14 +1,20 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import {
-  View, Text, StyleSheet, FlatList, SafeAreaView,
-  TouchableOpacity, ActivityIndicator, RefreshControl,
-} from 'react-native';
 import { useRouter } from 'expo-router';
-import { Colors } from '../../constants/theme';
-import { MOCK_POSTS } from '../../constants/mockData';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  RefreshControl,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
+} from 'react-native';
 import PostCard from '../../components/PostCard';
-import { supabase } from '../../lib/supabase';
+import { MOCK_POSTS } from '../../constants/mockData';
+import { Colors } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabase';
 import { Post } from '../../types';
 
 function mapDbPost(p: any): Post {
@@ -28,11 +34,21 @@ function mapDbPost(p: any): Post {
 
 export default function FeedScreen() {
   const router = useRouter();
-  const { user, profile, signOut } = useAuth();
+  const { user, profile, loading, signOut } = useAuth();
   const [posts, setPosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [useMock, setUseMock] = useState(false);
+
+  // DEBUG: Log auth state
+  useEffect(() => {
+    console.log('🔍 Auth Debug:', {
+      user: user?.email,
+      profile: profile?.username,
+      loading,
+      hasSession: !!user,
+    });
+  }, [user, profile, loading]);
 
   const loadPosts = useCallback(async () => {
     const { data, error } = await supabase
@@ -52,13 +68,28 @@ export default function FeedScreen() {
       setUseMock(false);
       setPosts(data.map(mapDbPost));
     }
-    setLoading(false);
+    setIsLoading(false);
     setRefreshing(false);
   }, []);
 
   useEffect(() => { loadPosts(); }, [loadPosts]);
 
   const onRefresh = () => { setRefreshing(true); loadPosts(); };
+
+  // Show loading while auth is initializing
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.header}>
+          <Text style={styles.logo}>votioo</Text>
+        </View>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={Colors.brand} />
+          <Text style={styles.debugText}>Checking session...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -79,7 +110,7 @@ export default function FeedScreen() {
         )}
       </View>
 
-      {loading ? (
+      {isLoading ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={Colors.brand} />
         </View>
@@ -121,4 +152,5 @@ const styles = StyleSheet.create({
   list: { padding: 16, paddingBottom: 32 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, marginTop: 60 },
   emptyText: { color: Colors.textTertiary, fontSize: 15, textAlign: 'center' },
+  debugText: { color: Colors.textTertiary, fontSize: 14, marginTop: 12 },
 });
