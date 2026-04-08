@@ -20,6 +20,17 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
+          name="my-questions"
+          options={{
+            headerShown: true,
+            headerTitle: 'My Questions',
+            headerBackTitle: 'Back',
+            headerTintColor: '#7C3AED',
+            headerStyle: { backgroundColor: '#F8FAFC' },
+            headerShadowVisible: false,
+          }}
+        />
+        <Stack.Screen
           name="auth"
           options={{
             presentation: 'modal',
