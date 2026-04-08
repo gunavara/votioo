@@ -18,10 +18,15 @@ import { supabase } from '../../lib/supabase';
 import { Post } from '../../types';
 
 function mapDbPost(p: any): Post {
+  // Generate avatar URL from user ID if avatar exists
+  const avatarUrl = p.user_id 
+    ? `https://whaxkumefdykypunpoxf.supabase.co/storage/v1/object/public/avatars/${p.user_id}/avatar.jpg`
+    : null;
+  
   return {
     id: p.id,
     username: p.username_snapshot,
-    avatarUrl: null, // Avatar will be fetched separately if needed
+    avatarUrl: avatarUrl,
     question: p.question_text,
     categories: [p.primary_category, p.secondary_category].filter(Boolean),
     images: p.post_images?.map((i: any) => i.image_url) ?? [],

@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -272,10 +272,23 @@ export default function PostDetailScreen() {
           {/* Post author */}
           <View style={styles.authorRow}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {post.username_snapshot[0].toUpperCase()}
-              </Text>
+              {post.user_id ? (
+                <Image
+                  source={{
+                    uri: `https://whaxkumefdykypunpoxf.supabase.co/storage/v1/object/public/avatars/${post.user_id}/avatar.jpg`,
+                  }}
+                  style={styles.avatarImage}
+                  onError={() => {
+                    console.log('Avatar load error, falling back to letter');
+                  }}
+                />
+              ) : (
+                <Text style={styles.avatarText}>
+                  {post.username_snapshot[0].toUpperCase()}
+                </Text>
+              )}
             </View>
+
             <View>
               <Text style={styles.username}>@{post.username_snapshot}</Text>
               <Text style={styles.time}>{timeAgo(post.created_at)}</Text>
@@ -442,6 +455,16 @@ export default function PostDetailScreen() {
   );
 }
 
+interface AvatarStyle {
+  width: number;
+  height: number;
+  borderRadius: number;
+  backgroundColor: string;
+  justifyContent: 'center';
+  alignItems: 'center';
+  overflow: 'hidden';
+}
+
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
@@ -500,11 +523,16 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.brand,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
   },
   avatarText: {
     fontSize: 20,
     fontWeight: '700',
     color: 'white',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
   },
   username: {
     fontSize: 14,
