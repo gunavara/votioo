@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   RefreshControl,
   SafeAreaView,
   StyleSheet,
@@ -11,7 +12,6 @@ import {
   View
 } from 'react-native';
 import PostCard from '../../components/PostCard';
-import { MOCK_POSTS } from '../../constants/mockData';
 import { Colors } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
@@ -21,6 +21,7 @@ function mapDbPost(p: any): Post {
   return {
     id: p.id,
     username: p.username_snapshot,
+    avatarUrl: null, // Avatar will be fetched separately if needed
     question: p.question_text,
     categories: [p.primary_category, p.secondary_category].filter(Boolean),
     images: p.post_images?.map((i: any) => i.image_url) ?? [],
@@ -52,22 +53,23 @@ export default function FeedScreen() {
   }, [user, profile, loading]);
 
   const loadPosts = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('posts')
-      .select('*, post_images(image_url, sort_order)')
-      .eq('moderation_status', 'approved')
-      .order('created_at', { ascending: false })
-      .limit(30);
+      const { data, error } = await supabase
+        .from('posts')
+        .select('*, post_images(image_url, sort_order)')
+        .eq('moderation_status', 'approved')
+        .order('created_at', { ascending: false })
+        .limit(30);
 
-    if (error || !data) {
-      setUseMock(true);
-      const sortedMock = sortPosts(MOCK_POSTS, filter);
-      setPosts(sortedMock);
-    } else if (data.length === 0) {
-      setUseMock(true);
-      const sortedMock = sortPosts(MOCK_POSTS, filter);
-      setPosts(sortedMock);
+    if (error) {
+      console.error('Error loading posts:', error);
+      setPosts([]);
+      setUseMock(false);
+    } else if (!data || data.length === 0) {
+      console.log('No posts found');
+      setPosts([]);
+      setUseMock(false);
     } else {
+      console.log('Loaded', data.length, 'posts');
       setUseMock(false);
       const mappedPosts = data.map(mapDbPost);
       const sortedPosts = sortPosts(mappedPosts, filter);
@@ -116,11 +118,18 @@ export default function FeedScreen() {
         <Text style={styles.logo}>votioo</Text>
         {user ? (
           <TouchableOpacity style={styles.avatarBtn} onPress={() => router.push('/(tabs)/profile')}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {(profile?.username ?? user.email ?? 'U')[0].toUpperCase()}
-              </Text>
-            </View>
+            {profile?.avatar_url && profile.avatar_url.length > 0 ? (
+              <Image
+                source={{ uri: profile.avatar_url }}
+                style={styles.avatar}
+              />
+            ) : (
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {profile?.username ? profile.username[0].toUpperCase() : (user.email ? user.email[0].toUpperCase() : 'U')}
+                </Text>
+              </View>
+            )}
           </TouchableOpacity>
         ) : (
           <TouchableOpacity style={styles.signInBtn} onPress={() => router.push('/auth')}>

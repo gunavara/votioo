@@ -1,11 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Modal,
   SafeAreaView,
   ScrollView,
@@ -31,8 +29,6 @@ export default function ProfileScreen() {
   const [editBio, setEditBio] = useState(profile?.bio || '');
   const [savingBio, setSavingBio] = useState(false);
   const [privacyModalVisible, setPrivacyModalVisible] = useState(false);
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url || null);
 
   // Fetch user stats
   useEffect(() => {
@@ -100,87 +96,6 @@ export default function ProfileScreen() {
       Alert.alert('Error', error?.message || 'Failed to save bio');
     } finally {
       setSavingBio(false);
-    }
-  };
-
-  const handlePickAvatar = async () => {
-    try {
-      // Request media library permissions
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'We need access to your photo library to change your avatar.');
-        return;
-      }
-
-      // Launch image picker
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (result.canceled) return;
-
-      const imageUri = result.assets[0].uri;
-      await uploadAvatar(imageUri);
-    } catch (error: any) {
-      Alert.alert('Error', error?.message || 'Failed to pick image');
-    }
-  };
-
-  const uploadAvatar = async (imageUri: string) => {
-    if (!user) return;
-
-    try {
-      setUploadingAvatar(true);
-
-      // Read the image file
-      const response = await fetch(imageUri);
-      const blob = await response.blob();
-
-      // Generate unique filename (just filename, no subfolder)
-      const filename = `${user.id}-${Date.now()}.jpg`;
-
-      // Upload to Supabase storage (directly to bucket root)
-      const { error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(filename, blob, {
-          cacheControl: '3600',
-          upsert: true,
-        });
-
-      if (uploadError) {
-        Alert.alert('Upload Error', uploadError.message);
-        return;
-      }
-
-      // Get public URL
-      const { data } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(filename);
-
-      const publicUrl = data.publicUrl;
-
-      // Update profile with avatar URL
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({ avatar_url: publicUrl })
-        .eq('id', user.id);
-
-      if (updateError) {
-        Alert.alert('Error', 'Failed to save avatar URL');
-        return;
-      }
-
-      // Update local state and refresh profile
-      setAvatarUrl(publicUrl);
-      await refreshProfile();
-      Alert.alert('Success', 'Avatar updated!');
-    } catch (error: any) {
-      Alert.alert('Error', error?.message || 'Failed to upload avatar');
-    } finally {
-      setUploadingAvatar(false);
     }
   };
 
@@ -312,30 +227,9 @@ export default function ProfileScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         {/* Avatar & Info */}
         <View style={styles.profileCard}>
-          <TouchableOpacity
-            style={styles.avatarContainer}
-            onPress={handlePickAvatar}
-            disabled={uploadingAvatar}
-          >
-            {avatarUrl ? (
-              <Image
-                source={{ uri: avatarUrl }}
-                style={styles.avatar}
-              />
-            ) : (
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{(profile?.username ?? 'U')[0].toUpperCase()}</Text>
-              </View>
-            )}
-            {uploadingAvatar && (
-              <View style={styles.uploadingOverlay}>
-                <ActivityIndicator size="large" color="white" />
-              </View>
-            )}
-            <View style={styles.cameraIcon}>
-              <Ionicons name="camera" size={20} color="white" />
-            </View>
-          </TouchableOpacity>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{(profile?.username ?? 'U')[0].toUpperCase()}</Text>
+          </View>
           <Text style={styles.username}>@{profile?.username ?? 'user'}</Text>
           
           {/* Bio with edit button */}
@@ -573,34 +467,6 @@ const styles = StyleSheet.create({
   },
   editBioBtn: {
     padding: 6,
-  },
-  avatarContainer: {
-    position: 'relative',
-    marginBottom: 12,
-  },
-  uploadingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: 40,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cameraIcon: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.brand,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: 'white',
   },
   statsContainer: {
     flexDirection: 'row',

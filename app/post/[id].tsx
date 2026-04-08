@@ -1,22 +1,44 @@
-import React, { useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
   KeyboardAvoidingView,
   Platform,
-  Image,
-  Alert,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Colors, Radius, Shadow } from '../../constants/theme';
-import { MOCK_POSTS, MOCK_COMMENTS } from '../../constants/mockData';
-import { Ionicons } from '@expo/vector-icons';
+import { Colors, Radius } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabase';
+
+interface PostData {
+  id: string;
+  question_text: string;
+  primary_category: string;
+  secondary_category: string | null;
+  user_id: string;
+  username_snapshot: string;
+  created_at: string;
+  post_images?: Array<{ image_url: string; sort_order: number }>;
+}
+
+interface CommentData {
+  id: string;
+  post_id: string;
+  user_id: string;
+  username_snapshot: string;
+  comment_text: string;
+  created_at: string;
+}
 
 function timeAgo(dateStr: string): string {
   const now = new Date();
@@ -32,47 +54,207 @@ export default function PostDetailScreen() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
   const { user, profile } = useAuth();
-  const post = MOCK_POSTS.find((p) => p.id === id) ?? MOCK_POSTS[0];
 
+  const [post, setPost] = useState<PostData | null>(null);
+  const [loading, setLoading] = useState(true);
   const [localVote, setLocalVote] = useState<'yes' | 'no' | null>(null);
-  const [yesCt, setYesCt] = useState(post.yesCount);
-  const [noCt, setNoCt] = useState(post.noCount);
+  const [yesCt, setYesCt] = useState(0);
+  const [noCt, setNoCt] = useState(0);
   const [comment, setComment] = useState('');
-  const [comments, setComments] = useState(MOCK_COMMENTS);
+  const [comments, setComments] = useState<CommentData[]>([]);
+  const [submittingComment, setSubmittingComment] = useState(false);
+
+  // Fetch post data
+  useEffect(() => {
+    if (id) {
+      fetchPost();
+      fetchComments();
+      fetchVotes();
+    }
+  }, [id]);
+
+  const fetchPost = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('posts')
+        .select('*, post_images(image_url, sort_order)')
+        .eq('id', id)
+        .single();
+
+      if (error) {
+        console.log('❌ Error fetching post:', error);
+        Alert.alert('Error', 'Failed to load post');
+        return;
+      }
+
+      setPost(data as PostData);
+      console.log('✅ Post loaded:', data);
+    } catch (error: any) {
+      console.log('❌ Error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchComments = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('comments')
+        .select('*')
+        .eq('post_id', id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.log('❌ Error fetching comments:', error);
+        return;
+      }
+
+      setComments(data as CommentData[]);
+    } catch (error: any) {
+      console.log('❌ Error:', error);
+    }
+  };
+
+  const fetchVotes = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('votes')
+        .select('vote_type')
+        .eq('post_id', id);
+
+      if (error) {
+        console.log('❌ Error fetching votes:', error);
+        return;
+      }
+
+      const yesVotes = data?.filter((v) => v.vote_type === 'yes').length || 0;
+      const noVotes = data?.filter((v) => v.vote_type === 'no').length || 0;
+      setYesCt(yesVotes);
+      setNoCt(noVotes);
+    } catch (error: any) {
+      console.log('❌ Error:', error);
+    }
+  };
+
+  const handleVote = async (vote: 'yes' | 'no') => {
+    if (localVote || !user) {
+      Alert.alert('Error', 'You can only vote once, or you need to be signed in');
+      return;
+    }
+
+    try {
+      // Check if user already voted
+      const { data: existingVote, error: checkError } = await supabase
+        .from('votes')
+        .select('id')
+        .eq('post_id', id)
+        .eq('user_id', user.id)
+        .single();
+
+      if (existingVote) {
+        Alert.alert('Error', 'You have already voted on this post');
+        return;
+      }
+
+      // Insert vote
+      const { error } = await supabase
+        .from('votes')
+        .insert({
+          post_id: id,
+          user_id: user.id,
+          vote_type: vote,
+        });
+
+      if (error) {
+        console.log('❌ Vote error:', error);
+        Alert.alert('Error', 'Failed to vote');
+        return;
+      }
+
+      setLocalVote(vote);
+      if (vote === 'yes') {
+        setYesCt((c) => c + 1);
+      } else {
+        setNoCt((c) => c + 1);
+      }
+    } catch (error: any) {
+      console.log('❌ Error:', error);
+      Alert.alert('Error', 'Failed to vote');
+    }
+  };
+
+  const handleComment = async () => {
+    if (!comment.trim()) return;
+
+    if (!user) {
+      Alert.alert('Sign In', 'You need to be signed in to comment.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign In', onPress: () => router.push('/auth') },
+      ]);
+      return;
+    }
+
+    try {
+      setSubmittingComment(true);
+
+      const { error } = await supabase
+        .from('comments')
+        .insert({
+          post_id: id,
+          user_id: user.id,
+          username_snapshot: profile?.username || user.email?.split('@')[0] || 'user',
+          comment_text: comment.trim(),
+        });
+
+      if (error) {
+        console.log('❌ Comment error:', error);
+        Alert.alert('Error', 'Failed to post comment');
+        return;
+      }
+
+      setComment('');
+      await fetchComments();
+    } catch (error: any) {
+      console.log('❌ Error:', error);
+      Alert.alert('Error', 'Failed to post comment');
+    } finally {
+      setSubmittingComment(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.brand} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!post) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>Post not found</Text>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.backBtnText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const total = yesCt + noCt;
   const yesPercent = total > 0 ? Math.round((yesCt / total) * 100) : 50;
   const noPercent = 100 - yesPercent;
   const yesLeading = yesCt >= noCt;
 
-  const handleVote = (vote: 'yes' | 'no') => {
-    if (localVote) return;
-    setLocalVote(vote);
-    if (vote === 'yes') setYesCt((c) => c + 1);
-    else setNoCt((c) => c + 1);
-  };
-
-  const handleComment = () => {
-    if (!comment.trim()) return;
-
-    if (!user) {
-      Alert.alert('Влез в профила си', 'Трябва да си вписан, за да коментираш.', [
-        { text: 'Отказ', style: 'cancel' },
-        { text: 'Влез', onPress: () => router.push('/auth') },
-      ]);
-      return;
-    }
-
-    // Добавяме коментара локално
-    const newComment = {
-      id: Date.now().toString(),
-      username: profile?.username ?? user.email?.split('@')[0] ?? 'user',
-      text: comment.trim(),
-      createdAt: new Date().toISOString(),
-    };
-    setComments((prev) => [newComment, ...prev]);
-    setComment('');
-  };
+  const images = post.post_images?.sort((a, b) => a.sort_order - b.sort_order) || [];
 
   return (
     <KeyboardAvoidingView
@@ -81,14 +263,22 @@ export default function PostDetailScreen() {
     >
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          {/* Back button */}
+          <TouchableOpacity style={styles.backButtonRow} onPress={() => router.back()}>
+            <Ionicons name="chevron-back" size={24} color={Colors.text} />
+            <Text style={styles.backButtonText}>Back</Text>
+          </TouchableOpacity>
+
           {/* Post author */}
           <View style={styles.authorRow}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{post.username[0].toUpperCase()}</Text>
+              <Text style={styles.avatarText}>
+                {post.username_snapshot[0].toUpperCase()}
+              </Text>
             </View>
             <View>
-              <Text style={styles.username}>@{post.username}</Text>
-              <Text style={styles.time}>{timeAgo(post.createdAt)}</Text>
+              <Text style={styles.username}>@{post.username_snapshot}</Text>
+              <Text style={styles.time}>{timeAgo(post.created_at)}</Text>
             </View>
             <View style={{ flex: 1 }} />
             <TouchableOpacity style={styles.reportBtn}>
@@ -98,107 +288,155 @@ export default function PostDetailScreen() {
 
           {/* Categories */}
           <View style={styles.catRow}>
-            {post.categories.map((cat) => (
-              <View key={cat} style={styles.catChip}>
-                <Text style={styles.catText}>{cat}</Text>
+            {post.primary_category && (
+              <View style={styles.category}>
+                <Text style={styles.categoryText}>{post.primary_category}</Text>
               </View>
-            ))}
+            )}
+            {post.secondary_category && (
+              <View style={styles.category}>
+                <Text style={styles.categoryText}>{post.secondary_category}</Text>
+              </View>
+            )}
           </View>
 
-          {/* Question */}
-          <Text style={styles.question}>{post.question}</Text>
+          {/* Question text */}
+          <Text style={styles.question}>{post.question_text}</Text>
 
-          {/* Images */}
-          {post.images && post.images.length > 0 && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagesScroll}>
-              {post.images.map((uri, i) => (
-                <Image key={i} source={{ uri }} style={styles.image} resizeMode="cover" />
-              ))}
-            </ScrollView>
+          {/* Images carousel */}
+          {images.length > 0 && (
+            <View style={styles.imagesContainer}>
+              <FlatList
+                data={images}
+                renderItem={({ item }) => (
+                  <Image
+                    source={{ uri: item.image_url }}
+                    style={styles.image}
+                    onError={(error) => {
+                      console.log('❌ Image load error:', error);
+                    }}
+                  />
+                )}
+                keyExtractor={(item, index) => index.toString()}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+              />
+              {images.length > 1 && (
+                <Text style={styles.imageCount}>{images.length} photos</Text>
+              )}
+            </View>
           )}
 
           {/* Vote buttons */}
-          <View style={styles.voteRow}>
+          <View style={styles.voteContainer}>
             <TouchableOpacity
               style={[
                 styles.voteBtn,
                 styles.yesBtn,
-                localVote === 'yes' && styles.yesBtnActive,
-                yesLeading && !localVote && styles.yesBtnLeading,
+                localVote === 'yes' && styles.votedYes,
               ]}
               onPress={() => handleVote('yes')}
               disabled={!!localVote}
             >
               <Text style={styles.voteBtnEmoji}>👍</Text>
-              <Text style={[styles.voteBtnLabel, localVote === 'yes' && styles.labelWhite]}>Yes</Text>
-              <Text style={[styles.votePercent, localVote === 'yes' && styles.labelWhite]}>
-                {yesPercent}%
-              </Text>
+              <Text style={styles.voteBtnText}>Yes {yesPercent}%</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[
                 styles.voteBtn,
                 styles.noBtn,
-                localVote === 'no' && styles.noBtnActive,
-                !yesLeading && !localVote && styles.noBtnLeading,
+                localVote === 'no' && styles.votedNo,
               ]}
               onPress={() => handleVote('no')}
               disabled={!!localVote}
             >
               <Text style={styles.voteBtnEmoji}>👎</Text>
-              <Text style={[styles.voteBtnLabel, localVote === 'no' && styles.labelWhite]}>No</Text>
-              <Text style={[styles.votePercent, localVote === 'no' && styles.labelWhite]}>
-                {noPercent}%
-              </Text>
+              <Text style={styles.voteBtnText}>No {noPercent}%</Text>
             </TouchableOpacity>
           </View>
 
           {/* Vote bar */}
-          <View style={styles.barContainer}>
-            <View style={[styles.barYes, { flex: yesPercent }]} />
-            <View style={[styles.barNo, { flex: noPercent }]} />
-          </View>
-          <View style={styles.barLabels}>
-            <Text style={styles.barLabelYes}>{yesCt} Yes</Text>
-            <Text style={styles.barLabelNo}>{noCt} No</Text>
+          <View style={styles.voteBar}>
+            <View
+              style={[
+                styles.voteBarSegment,
+                { width: `${yesPercent}%`, backgroundColor: '#10B981' },
+              ]}
+            />
+            <View
+              style={[
+                styles.voteBarSegment,
+                { width: `${noPercent}%`, backgroundColor: '#EF4444' },
+              ]}
+            />
           </View>
 
-          {/* Comments */}
-          <Text style={styles.commentsTitle}>Comments ({comments.length})</Text>
+          {/* Vote counts */}
+          <View style={styles.voteCounts}>
+            <Text style={styles.voteCountText}>
+              <Text style={styles.voteCountNumber}>{yesCt}</Text> Yes
+            </Text>
+            <Text style={styles.voteCountText}>
+              <Text style={styles.voteCountNumber}>{noCt}</Text> No
+            </Text>
+          </View>
 
-          {comments.map((c) => (
-            <View key={c.id} style={styles.commentCard}>
-              <View style={styles.commentAvatar}>
-                <Text style={styles.commentAvatarText}>{c.username[0].toUpperCase()}</Text>
-              </View>
-              <View style={styles.commentBody}>
-                <View style={styles.commentHeader}>
-                  <Text style={styles.commentUsername}>@{c.username}</Text>
-                  <Text style={styles.commentTime}>{timeAgo(c.createdAt)}</Text>
-                </View>
-                <Text style={styles.commentText}>{c.text}</Text>
-              </View>
+          {/* Comments section */}
+          <View style={styles.commentsSection}>
+            <Text style={styles.commentsTitle}>Comments ({comments.length})</Text>
+
+            {/* Comment input */}
+            <View style={styles.commentInputContainer}>
+              <TextInput
+                style={styles.commentInput}
+                placeholder="Add a comment..."
+                placeholderTextColor={Colors.textTertiary}
+                value={comment}
+                onChangeText={setComment}
+                multiline
+                editable={!submittingComment}
+              />
+              <TouchableOpacity
+                style={[
+                  styles.commentSubmitBtn,
+                  (!comment.trim() || submittingComment) && styles.commentSubmitBtnDisabled,
+                ]}
+                onPress={handleComment}
+                disabled={!comment.trim() || submittingComment}
+              >
+                <Ionicons
+                  name="send"
+                  size={20}
+                  color={comment.trim() && !submittingComment ? 'white' : Colors.textTertiary}
+                />
+              </TouchableOpacity>
             </View>
-          ))}
-        </ScrollView>
 
-        {/* Comment input */}
-        <View style={styles.commentInputRow}>
-          <TextInput
-            style={styles.commentInput}
-            placeholder="Add a comment..."
-            placeholderTextColor={Colors.textTertiary}
-            value={comment}
-            onChangeText={setComment}
-            maxLength={200}
-            returnKeyType="send"
-            onSubmitEditing={handleComment}
-          />
-          <TouchableOpacity style={styles.sendBtn} onPress={handleComment}>
-            <Ionicons name="send" size={18} color="#fff" />
-          </TouchableOpacity>
-        </View>
+            {/* Comments list */}
+            {comments.length === 0 ? (
+              <Text style={styles.noCommentsText}>No comments yet. Be the first!</Text>
+            ) : (
+              comments.map((c) => (
+                <View key={c.id} style={styles.commentItem}>
+                  <View style={styles.commentAvatar}>
+                    <Text style={styles.commentAvatarText}>
+                      {c.username_snapshot[0].toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.commentContent}>
+                    <View style={styles.commentHeader}>
+                      <Text style={styles.commentUsername}>@{c.username_snapshot}</Text>
+                      <Text style={styles.commentTime}>{timeAgo(c.created_at)}</Text>
+                    </View>
+                    <Text style={styles.commentText}>{c.comment_text}</Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        </ScrollView>
       </SafeAreaView>
     </KeyboardAvoidingView>
   );
@@ -210,75 +448,127 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   content: {
-    padding: 16,
-    paddingBottom: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorText: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+    marginBottom: 16,
+  },
+  backButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 4,
+  },
+  backButtonText: {
+    fontSize: 16,
+    color: Colors.text,
+    fontWeight: '500',
+  },
+  backBtn: {
+    backgroundColor: Colors.brand,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: Radius.md,
+  },
+  backBtnText: {
+    color: 'white',
+    fontWeight: '600',
   },
   authorRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
-    gap: 10,
+    marginBottom: 16,
+    gap: 12,
   },
   avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.brandLight,
-    alignItems: 'center',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: Colors.brand,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   avatarText: {
-    color: Colors.brand,
+    fontSize: 20,
     fontWeight: '700',
-    fontSize: 16,
+    color: 'white',
   },
   username: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '600',
     color: Colors.text,
   },
   time: {
     fontSize: 12,
     color: Colors.textTertiary,
+    marginTop: 2,
   },
   reportBtn: {
-    padding: 4,
+    padding: 8,
   },
   catRow: {
     flexDirection: 'row',
-    gap: 6,
-    marginBottom: 10,
+    gap: 8,
+    marginBottom: 12,
+    flexWrap: 'wrap',
   },
-  catChip: {
+  category: {
     backgroundColor: Colors.brandLight,
-    borderRadius: Radius.full,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: Radius.md,
   },
-  catText: {
-    color: Colors.brand,
+  categoryText: {
     fontSize: 12,
+    color: Colors.brand,
     fontWeight: '600',
   },
   question: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
     color: Colors.text,
-    lineHeight: 28,
     marginBottom: 16,
+    lineHeight: 24,
   },
-  imagesScroll: {
+  imagesContainer: {
     marginBottom: 16,
+    borderRadius: Radius.lg,
+    overflow: 'hidden',
+    backgroundColor: Colors.surface,
   },
   image: {
-    width: 280,
-    height: 200,
-    borderRadius: Radius.md,
-    marginRight: 10,
+    width: 300,
+    height: 300,
+    marginRight: 8,
   },
-  voteRow: {
+  imageCount: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    color: 'white',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: Radius.md,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  voteContainer: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 12,
     marginBottom: 12,
   },
   voteBtn: {
@@ -286,152 +576,145 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 14,
-    borderRadius: Radius.md,
-    borderWidth: 1.5,
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: Radius.lg,
+    borderWidth: 2,
   },
   yesBtn: {
-    borderColor: Colors.yes,
-    backgroundColor: Colors.yesLight,
-  },
-  yesBtnActive: {
-    backgroundColor: Colors.yes,
-    borderColor: Colors.yes,
-  },
-  yesBtnLeading: {
-    paddingVertical: 17,
+    borderColor: '#10B981',
+    backgroundColor: '#F0FDF4',
   },
   noBtn: {
-    borderColor: Colors.no,
-    backgroundColor: Colors.noLight,
+    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
   },
-  noBtnActive: {
-    backgroundColor: Colors.no,
-    borderColor: Colors.no,
+  votedYes: {
+    backgroundColor: '#10B981',
   },
-  noBtnLeading: {
-    paddingVertical: 17,
+  votedNo: {
+    backgroundColor: '#EF4444',
   },
   voteBtnEmoji: {
-    fontSize: 18,
+    fontSize: 20,
   },
-  voteBtnLabel: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.text,
-  },
-  votePercent: {
+  voteBtnText: {
     fontSize: 14,
     fontWeight: '600',
-    color: Colors.textSecondary,
+    color: Colors.text,
   },
-  labelWhite: {
-    color: '#fff',
-  },
-  barContainer: {
+  voteBar: {
     flexDirection: 'row',
-    height: 6,
-    borderRadius: Radius.full,
+    height: 8,
+    borderRadius: 4,
     overflow: 'hidden',
-    marginBottom: 6,
+    marginBottom: 12,
+    backgroundColor: Colors.border,
   },
-  barYes: {
-    backgroundColor: Colors.yes,
+  voteBarSegment: {
+    height: '100%',
   },
-  barNo: {
-    backgroundColor: Colors.no,
-  },
-  barLabels: {
+  voteCounts: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 24,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
-  barLabelYes: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.yes,
+  voteCountText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
   },
-  barLabelNo: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.no,
-  },
-  commentsTitle: {
-    fontSize: 17,
+  voteCountNumber: {
     fontWeight: '700',
     color: Colors.text,
-    marginBottom: 14,
   },
-  commentCard: {
+  commentsSection: {
+    marginTop: 12,
+  },
+  commentsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.text,
+    marginBottom: 12,
+  },
+  commentInputContainer: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 14,
+    gap: 8,
+    marginBottom: 16,
+    alignItems: 'flex-end',
+  },
+  commentInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: Colors.text,
+    maxHeight: 100,
+  },
+  commentSubmitBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.brand,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  commentSubmitBtnDisabled: {
+    backgroundColor: Colors.border,
+  },
+  noCommentsText: {
+    fontSize: 14,
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    marginVertical: 20,
+  },
+  commentItem: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
   commentAvatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: Colors.brandLight,
-    alignItems: 'center',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.brand,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   commentAvatarText: {
-    color: Colors.brand,
-    fontWeight: '700',
     fontSize: 14,
+    fontWeight: '700',
+    color: 'white',
   },
-  commentBody: {
+  commentContent: {
     flex: 1,
-    backgroundColor: Colors.card,
-    borderRadius: Radius.md,
-    padding: 10,
-    ...Shadow.card,
   },
   commentHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
     marginBottom: 4,
   },
   commentUsername: {
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '600',
     color: Colors.text,
   },
   commentTime: {
-    fontSize: 11,
+    fontSize: 12,
     color: Colors.textTertiary,
   },
   commentText: {
     fontSize: 14,
-    color: Colors.text,
-    lineHeight: 19,
-  },
-  commentInputRow: {
-    flexDirection: 'row',
-    gap: 10,
-    padding: 12,
-    backgroundColor: Colors.card,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  commentInput: {
-    flex: 1,
-    backgroundColor: Colors.background,
-    borderRadius: Radius.full,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: Colors.text,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  sendBtn: {
-    backgroundColor: Colors.brand,
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: 'center',
-    justifyContent: 'center',
+    color: Colors.textSecondary,
+    lineHeight: 20,
   },
 });

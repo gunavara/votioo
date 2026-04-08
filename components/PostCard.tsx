@@ -1,14 +1,14 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
   Image,
   Pressable,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Shadow } from '../constants/theme';
 import { Post } from '../types';
 
@@ -53,9 +53,16 @@ export default function PostCard({ post, onVote }: Props) {
     >
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{post.username[0].toUpperCase()}</Text>
-        </View>
+        {post.avatarUrl && post.avatarUrl.length > 0 ? (
+          <Image
+            source={{ uri: post.avatarUrl }}
+            style={styles.avatar}
+          />
+        ) : (
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{post.username && post.username.length > 0 ? post.username[0].toUpperCase() : 'U'}</Text>
+          </View>
+        )}
         <View style={styles.headerInfo}>
           <Text style={styles.username}>@{post.username}</Text>
           <Text style={styles.time}>{timeAgo(post.createdAt)}</Text>
