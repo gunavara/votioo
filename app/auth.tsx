@@ -1,90 +1,115 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, TextInput,
-  KeyboardAvoidingView, Platform, ScrollView, Alert, ActivityIndicator,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView, Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
 import { Colors, Radius } from '../constants/theme';
-import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
-type Step = 'email' | 'code';
+type Step = 'choice' | 'register' | 'login';
+
+// Password strength validator
+const getPasswordStrength = (password: string): { score: number; label: string; color: string } => {
+  let score = 0;
+  if (password.length >= 8) score++;
+  if (password.length >= 12) score++;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score++;
+  if (/\d/.test(password)) score++;
+  if (/[^a-zA-Z\d]/.test(password)) score++;
+
+  if (score <= 1) return { score: 1, label: 'Weak', color: Colors.no };
+  if (score <= 2) return { score: 2, label: 'Fair', color: '#F59E0B' };
+  if (score <= 3) return { score: 3, label: 'Good', color: '#3B82F6' };
+  return { score: 4, label: 'Strong', color: Colors.yes };
+};
 
 export default function AuthScreen() {
   const router = useRouter();
-  const { refreshAuth } = useAuth();
-  const [step, setStep] = useState<Step>('email');
+  const { signUp, signIn } = useAuth();
+
+  const [step, setStep] = useState<Step>('choice');
   const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [stayLoggedIn, setStayLoggedIn] = useState(true);
   const [loading, setLoading] = useState(false);
 
-  const handleSendCode = async () => {
-    if (!email.trim() || !email.includes('@')) {
-      Alert.alert('Invalid email', 'Please enter a valid email address.');
+  const passwordStrength = getPasswordStrength(password);
+
+  const validateEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+  const validateUsername = (u: string) => /^[a-zA-Z0-9_]{3,20}$/.test(u);
+
+  const handleRegister = async () => {
+    // Validation
+    if (!email.trim()) {
+      Alert.alert('Error', 'Please enter your email');
       return;
     }
+    if (!validateEmail(email)) {
+      Alert.alert('Error', 'Please enter a valid email');
+      return;
+    }
+    if (!username.trim()) {
+      Alert.alert('Error', 'Please enter a username');
+      return;
+    }
+    if (!validateUsername(username)) {
+      Alert.alert('Error', 'Username must be 3-20 characters (letters, numbers, underscore only)');
+      return;
+    }
+    if (password.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters');
+      return;
+    }
+    if (password !== confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim().toLowerCase(),
-      options: { shouldCreateUser: true },
-    });
+    const { error } = await signUp(email, password, username);
     setLoading(false);
+
     if (error) {
-      Alert.alert('Error', error.message);
+      Alert.alert('Registration Failed', error);
     } else {
-      setStep('code');
+      Alert.alert('Success', 'Account created! You are now signed in.', [
+        { text: 'OK', onPress: () => router.replace('/(tabs)') }
+      ]);
     }
   };
 
-  const handleVerifyCode = async () => {
-    if (code.trim().length < 6) {
-      Alert.alert('Грешка', 'Въведи пълния код от имейла.');
+  const handleLogin = async () => {
+    if (!email.trim()) {
+      Alert.alert('Error', 'Please enter your email');
       return;
     }
+    if (!password.trim()) {
+      Alert.alert('Error', 'Please enter your password');
+      return;
+    }
+
     setLoading(true);
+    const { error } = await signIn(email, password, stayLoggedIn);
+    setLoading(false);
 
-    try {
-      // Стъпка 1: верифициране на OTP
-      let result = await supabase.auth.verifyOtp({
-        email: email.trim().toLowerCase(),
-        token: code.trim(),
-        type: 'magiclink',
-      });
-
-      if (result.error) {
-        result = await supabase.auth.verifyOtp({
-          email: email.trim().toLowerCase(),
-          token: code.trim(),
-          type: 'email',
-        });
-      }
-
-      if (result.error) {
-        setLoading(false);
-        Alert.alert('Грешка при верификация', result.error.message);
-        return;
-      }
-
-      if (!result.data?.session) {
-        setLoading(false);
-        Alert.alert('Грешка', 'Сесията не е получена. Поискай нов код.');
-        return;
-      }
-
-      // Изрично запазваме сесията и обновяваме контекста
-      await supabase.auth.setSession({
-        access_token: result.data.session.access_token,
-        refresh_token: result.data.session.refresh_token,
-      });
-
-      await refreshAuth();
-      setLoading(false);
+    if (error) {
+      Alert.alert('Login Failed', error);
+    } else {
       router.replace('/(tabs)');
-
-    } catch (err: any) {
-      setLoading(false);
-      Alert.alert('Неочаквана грешка', err?.message ?? String(err));
     }
   };
 
@@ -92,117 +117,273 @@ export default function AuthScreen() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
 
-        <TouchableOpacity style={styles.closeBtn} onPress={() => router.back()}>
-          <Ionicons name="close" size={24} color={Colors.textSecondary} />
-        </TouchableOpacity>
+        {step !== 'choice' && (
+          <TouchableOpacity
+            style={styles.closeBtn}
+            onPress={() => setStep('choice')}
+          >
+            <Ionicons name="chevron-back" size={24} color={Colors.brand} />
+          </TouchableOpacity>
+        )}
 
         <Text style={styles.logo}>votioo</Text>
         <Text style={styles.tagline}>Ask. Vote. Decide.</Text>
 
-        {step === 'email' ? (
+        {/* Choice Screen */}
+        {step === 'choice' && (
           <>
-            <Text style={styles.heading}>Join the conversation</Text>
+            <Text style={styles.heading}>Welcome to Votioo</Text>
             <Text style={styles.subheading}>
-              Sign in to vote, comment, and post your own questions.
+              Join thousands voting on questions that matter
             </Text>
 
-            {/* Apple & Google (coming soon) */}
-            <View style={styles.socialButtons}>
+            <View style={styles.buttonGroup}>
               <TouchableOpacity
-                style={styles.socialBtn}
-                onPress={() => Alert.alert('Coming soon', 'Apple Sign In will be added when publishing to App Store.')}
+                style={[styles.largeBtn, styles.primaryBtn]}
+                onPress={() => setStep('register')}
               >
-                <Text style={styles.socialIcon}>🍎</Text>
-                <Text style={styles.socialBtnText}>Continue with Apple</Text>
+                <Text style={styles.largeBtnText}>Create Account</Text>
+                <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 8 }} />
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.socialBtn, styles.googleBtn]}
-                onPress={() => Alert.alert('Coming soon', 'Google Sign In will be added in the next update.')}
+                style={[styles.largeBtn, styles.secondaryBtn]}
+                onPress={() => setStep('login')}
               >
-                <Text style={[styles.socialIcon, { color: Colors.text }]}>G</Text>
-                <Text style={[styles.socialBtnText, styles.googleText]}>Continue with Google</Text>
+                <Text style={[styles.largeBtnText, { color: Colors.brand }]}>Sign In</Text>
+                <Ionicons name="arrow-forward" size={18} color={Colors.brand} style={{ marginLeft: 8 }} />
               </TouchableOpacity>
             </View>
 
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or use email</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            <View style={styles.emailSection}>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your email"
-                placeholderTextColor={Colors.textTertiary}
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <TouchableOpacity
-                style={[styles.primaryBtn, loading && { opacity: 0.6 }]}
-                onPress={handleSendCode}
-                disabled={loading}
-              >
-                {loading
-                  ? <ActivityIndicator color="#fff" />
-                  : <Text style={styles.primaryBtnText}>Send me a code ✨</Text>
-                }
-              </TouchableOpacity>
-              <Text style={styles.note}>
-                We'll send a 6-digit code to your email. No password needed.
-              </Text>
-            </View>
+            <Text style={styles.legal}>
+              By continuing you agree to our{' '}
+              <Text style={styles.legalLink}>Terms of Service</Text> and{' '}
+              <Text style={styles.legalLink}>Privacy Policy</Text>.
+            </Text>
           </>
-        ) : (
+        )}
+
+        {/* Registration Screen */}
+        {step === 'register' && (
           <>
-            <Text style={styles.heading}>Check your email</Text>
+            <Text style={styles.heading}>Create Account</Text>
             <Text style={styles.subheading}>
-              We sent a 6-digit code to{'\n'}
-              <Text style={{ color: Colors.brand, fontWeight: '700' }}>{email}</Text>
+              Sign up to start voting and asking questions
             </Text>
 
-            <View style={styles.emailSection}>
-              <TextInput
-                style={[styles.input, styles.codeInput]}
-                placeholder="00000000"
-                placeholderTextColor={Colors.textTertiary}
-                value={code}
-                onChangeText={setCode}
-                keyboardType="number-pad"
-                maxLength={8}
-                autoFocus
-              />
+            <View style={styles.form}>
+              {/* Email */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Email</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="mail-outline" size={18} color={Colors.textTertiary} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="your@email.com"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={email}
+                    onChangeText={setEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!loading}
+                  />
+                </View>
+              </View>
+
+              {/* Username */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Username</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="person-outline" size={18} color={Colors.textTertiary} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="username_123"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={username}
+                    onChangeText={setUsername}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!loading}
+                  />
+                </View>
+                <Text style={styles.hint}>3-20 characters, letters, numbers, underscore only</Text>
+              </View>
+
+              {/* Password */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Password</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="lock-closed-outline" size={18} color={Colors.textTertiary} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="••••••••"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                    editable={!loading}
+                  />
+                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                    <Ionicons
+                      name={showPassword ? 'eye-outline' : 'eye-off-outline'}
+                      size={18}
+                      color={Colors.textTertiary}
+                    />
+                  </TouchableOpacity>
+                </View>
+                {password && (
+                  <View style={styles.strengthContainer}>
+                    <View style={styles.strengthBar}>
+                      <View
+                        style={[
+                          styles.strengthFill,
+                          {
+                            width: `${(passwordStrength.score / 4) * 100}%`,
+                            backgroundColor: passwordStrength.color
+                          }
+                        ]}
+                      />
+                    </View>
+                    <Text style={[styles.strengthLabel, { color: passwordStrength.color }]}>
+                      {passwordStrength.label}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Confirm Password */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Confirm Password</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="lock-closed-outline" size={18} color={Colors.textTertiary} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="••••••••"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    secureTextEntry={!showConfirmPassword}
+                    autoCapitalize="none"
+                    editable={!loading}
+                  />
+                  <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
+                    <Ionicons
+                      name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'}
+                      size={18}
+                      color={Colors.textTertiary}
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
               <TouchableOpacity
-                style={[styles.primaryBtn, loading && { opacity: 0.6 }]}
-                onPress={handleVerifyCode}
+                style={[styles.primaryBtn, styles.submitBtn, loading && { opacity: 0.6 }]}
+                onPress={handleRegister}
                 disabled={loading}
               >
-                {loading
-                  ? <ActivityIndicator color="#fff" />
-                  : <Text style={styles.primaryBtnText}>Sign in →</Text>
-                }
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={() => { setStep('email'); setCode(''); }}>
-                <Text style={styles.backLink}>← Use a different email</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={handleSendCode}>
-                <Text style={styles.resendLink}>Resend code</Text>
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Text style={styles.largeBtnText}>Create Account</Text>
+                    <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 8 }} />
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           </>
         )}
 
-        <Text style={styles.legal}>
-          By continuing you agree to our{' '}
-          <Text style={styles.legalLink}>Terms of Service</Text> and{' '}
-          <Text style={styles.legalLink}>Privacy Policy</Text>.
-        </Text>
+        {/* Login Screen */}
+        {step === 'login' && (
+          <>
+            <Text style={styles.heading}>Sign In</Text>
+            <Text style={styles.subheading}>
+              Welcome back! Sign in to your account
+            </Text>
+
+            <View style={styles.form}>
+              {/* Email */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Email</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="mail-outline" size={18} color={Colors.textTertiary} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="your@email.com"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={email}
+                    onChangeText={setEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!loading}
+                  />
+                </View>
+              </View>
+
+              {/* Password */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Password</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="lock-closed-outline" size={18} color={Colors.textTertiary} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="••••••••"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                    editable={!loading}
+                  />
+                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                    <Ionicons
+                      name={showPassword ? 'eye-outline' : 'eye-off-outline'}
+                      size={18}
+                      color={Colors.textTertiary}
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Stay Logged In */}
+              <Pressable
+                style={styles.checkboxRow}
+                onPress={() => setStayLoggedIn(!stayLoggedIn)}
+              >
+                <View style={[styles.checkbox, stayLoggedIn && styles.checkboxChecked]}>
+                  {stayLoggedIn && (
+                    <Ionicons name="checkmark" size={14} color="#fff" />
+                  )}
+                </View>
+                <Text style={styles.checkboxLabel}>Keep me signed in</Text>
+              </Pressable>
+
+              <TouchableOpacity
+                style={[styles.primaryBtn, styles.submitBtn, loading && { opacity: 0.6 }]}
+                onPress={handleLogin}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Text style={styles.largeBtnText}>Sign In</Text>
+                    <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 8 }} />
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={() => Alert.alert('Coming Soon', 'Password reset will be available soon')}>
+                <Text style={styles.forgotLink}>Forgot password?</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -210,47 +391,168 @@ export default function AuthScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flexGrow: 1, backgroundColor: Colors.background,
-    padding: 24, paddingTop: 60, alignItems: 'center',
+    flexGrow: 1,
+    backgroundColor: Colors.background,
+    padding: 24,
+    paddingTop: 60,
+    alignItems: 'center',
   },
-  closeBtn: { position: 'absolute', top: 20, right: 20, padding: 6 },
-  logo: { fontSize: 32, fontWeight: '900', color: Colors.brand, letterSpacing: -1, marginBottom: 4 },
-  tagline: { fontSize: 14, color: Colors.textTertiary, marginBottom: 32, fontWeight: '500', letterSpacing: 0.5 },
-  heading: { fontSize: 24, fontWeight: '800', color: Colors.text, textAlign: 'center', marginBottom: 8 },
+  closeBtn: {
+    position: 'absolute',
+    top: 20,
+    left: 20,
+    padding: 8,
+  },
+  logo: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: Colors.brand,
+    letterSpacing: -1,
+    marginBottom: 4,
+  },
+  tagline: {
+    fontSize: 14,
+    color: Colors.textTertiary,
+    marginBottom: 32,
+    fontWeight: '500',
+    letterSpacing: 0.5,
+  },
+  heading: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: Colors.text,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
   subheading: {
-    fontSize: 15, color: Colors.textSecondary, textAlign: 'center',
-    lineHeight: 22, marginBottom: 32, paddingHorizontal: 16,
+    fontSize: 15,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 32,
+    paddingHorizontal: 16,
   },
-  socialButtons: { width: '100%', gap: 12 },
-  socialBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 10, backgroundColor: Colors.text, borderRadius: Radius.md, padding: 15,
+  buttonGroup: {
+    width: '100%',
+    gap: 12,
+    marginBottom: 32,
   },
-  googleBtn: { backgroundColor: Colors.card, borderWidth: 1.5, borderColor: Colors.border },
-  socialIcon: { fontSize: 18, color: '#fff', fontWeight: '800' },
-  socialBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  googleText: { color: Colors.text },
-  divider: {
-    flexDirection: 'row', alignItems: 'center',
-    width: '100%', marginVertical: 24, gap: 12,
+  largeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: Radius.md,
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    width: '100%',
   },
-  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
-  dividerText: { color: Colors.textTertiary, fontSize: 13, fontWeight: '500' },
-  emailSection: { width: '100%', gap: 12 },
+
+  primaryBtn: {
+    backgroundColor: Colors.brand,
+  },
+  secondaryBtn: {
+    backgroundColor: Colors.card,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+  },
+  largeBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  form: {
+    width: '100%',
+    gap: 20,
+  },
+  inputGroup: {
+    gap: 8,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.card,
+    borderRadius: Radius.md,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
   input: {
-    backgroundColor: Colors.card, borderRadius: Radius.md,
-    borderWidth: 1.5, borderColor: Colors.border,
-    padding: 14, fontSize: 15, color: Colors.text,
+    flex: 1,
+    fontSize: 15,
+    color: Colors.text,
+    padding: 0,
   },
-  codeInput: {
-    fontSize: 28, fontWeight: '700', textAlign: 'center',
-    letterSpacing: 8, paddingVertical: 18,
+  hint: {
+    fontSize: 12,
+    color: Colors.textTertiary,
   },
-  primaryBtn: { backgroundColor: Colors.brand, borderRadius: Radius.md, padding: 15, alignItems: 'center' },
-  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  note: { fontSize: 12, color: Colors.textTertiary, textAlign: 'center', lineHeight: 18 },
-  backLink: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', marginTop: 4 },
-  resendLink: { fontSize: 14, color: Colors.brand, fontWeight: '600', textAlign: 'center' },
-  legal: { marginTop: 32, fontSize: 12, color: Colors.textTertiary, textAlign: 'center', lineHeight: 18 },
-  legalLink: { color: Colors.brand, fontWeight: '600' },
+  strengthContainer: {
+    gap: 6,
+  },
+  strengthBar: {
+    height: 4,
+    backgroundColor: Colors.border,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  strengthFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  strengthLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: Colors.brand,
+    borderColor: Colors.brand,
+  },
+  checkboxLabel: {
+    fontSize: 14,
+    color: Colors.text,
+    fontWeight: '500',
+  },
+  submitBtn: {
+    marginTop: 8,
+  },
+  forgotLink: {
+    fontSize: 14,
+    color: Colors.brand,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  legal: {
+    marginTop: 32,
+    fontSize: 12,
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  legalLink: {
+    color: Colors.brand,
+    fontWeight: '600',
+  },
 });

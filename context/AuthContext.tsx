@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Session, User } from '@supabase/supabase-js';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
@@ -18,6 +19,8 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   refreshAuth: () => Promise<void>;
+  signUp: (email: string, password: string, username: string) => Promise<{ error: string | null }>;
+  signIn: (email: string, password: string, stayLoggedIn: boolean) => Promise<{ error: string | null }>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -28,7 +31,11 @@ const AuthContext = createContext<AuthContextType>({
   signOut: async () => {},
   refreshProfile: async () => {},
   refreshAuth: async () => {},
+  signUp: async () => ({ error: null }),
+  signIn: async () => ({ error: null }),
 });
+
+const STAY_LOGGED_IN_KEY = 'votioo_stay_logged_in';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -37,38 +44,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (userId: string) => {
-    try {
-      console.log('👤 Fetching profile for user:', userId);
-      
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-      
-      if (error) {
-        console.log('⚠️ Profile not found, creating one...', error.message);
-        // Profile doesn't exist, create it
+  try {
+    console.log('👤 Fetching profile for user:', userId);
+    
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+    
+    if (error) {
+      console.log('⚠️ Profile not found, creating one...', error.message);
+      // Only create if it's a "not found" error, not a duplicate key error
+      if (error.code === 'PGRST116') {
         await createProfile(userId);
-        return;
       }
-      
-      if (data) {
-        console.log('✅ Profile found:', data.username);
-        setProfile(data);
-      }
-    } catch (error) {
-      console.log('❌ Profile fetch exception:', error);
+      return;
     }
-  };
+    
+    if (data) {
+      console.log('✅ Profile found:', data.username);
+      setProfile(data);
+    }
+  } catch (error) {
+    console.log('❌ Profile fetch exception:', error);
+  }
+};
 
-  const createProfile = async (userId: string) => {
+
+  const createProfile = async (userId: string, username?: string) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
         .insert({
           id: userId,
-          username: `user_${userId.slice(0, 8)}`,
+          username: username || `user_${userId.slice(0, 8)}`,
           is_public: true,
         })
         .select()
@@ -107,6 +117,88 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const signUp = async (email: string, password: string, username: string) => {
+    try {
+      console.log('📝 Signing up user:', email);
+      
+      // Check if username already exists
+      const { data: existingUser } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('username', username)
+        .single();
+
+      if (existingUser) {
+        return { error: 'Username already taken' };
+      }
+
+      // Sign up with Supabase
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
+        password: password,
+        options: {
+          data: {
+            username: username,
+          },
+        },
+      });
+
+      if (error) {
+        console.log('❌ Sign up error:', error.message);
+        return { error: error.message };
+      }
+
+      if (data.user) {
+        console.log('✅ User signed up:', data.user.email);
+        // Create profile with username
+        await createProfile(data.user.id, username);
+        return { error: null };
+      }
+
+      return { error: 'Unknown error during sign up' };
+    } catch (error: any) {
+      console.log('❌ Sign up exception:', error);
+      return { error: error?.message || 'An error occurred' };
+    }
+  };
+
+  const signIn = async (email: string, password: string, stayLoggedIn: boolean) => {
+    try {
+      console.log('🔐 Signing in user:', email);
+      
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password: password,
+      });
+
+      if (error) {
+        console.log('❌ Sign in error:', error.message);
+        return { error: error.message };
+      }
+
+      if (data.session && data.user) {
+        console.log('✅ User signed in:', data.user.email);
+        
+        // Store "stay logged in" preference
+        if (stayLoggedIn) {
+          await AsyncStorage.setItem(STAY_LOGGED_IN_KEY, 'true');
+          console.log('💾 Stay logged in enabled');
+        } else {
+          await AsyncStorage.removeItem(STAY_LOGGED_IN_KEY);
+        }
+
+        // Fetch profile
+        await fetchProfile(data.user.id);
+        return { error: null };
+      }
+
+      return { error: 'Unknown error during sign in' };
+    } catch (error: any) {
+      console.log('❌ Sign in exception:', error);
+      return { error: error?.message || 'An error occurred' };
+    }
+  };
+
   useEffect(() => {
     let mounted = true;
 
@@ -114,6 +206,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         console.log('🔄 Initializing auth...');
         
+        // Try to restore session from storage
         const { data: { session: initialSession }, error } = await supabase.auth.getSession();
         
         if (error) {
@@ -143,6 +236,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     initializeAuth();
 
+    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       console.log('🔔 Auth state changed:', event);
       
@@ -166,17 +260,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     try {
+      console.log('🔓 Signing out...');
       await supabase.auth.signOut();
+      await AsyncStorage.removeItem(STAY_LOGGED_IN_KEY);
       setSession(null);
       setUser(null);
       setProfile(null);
+      console.log('✅ Signed out successfully');
     } catch (error) {
       console.log('❌ Sign out error:', error);
     }
   };
 
   return (
-    <AuthContext.Provider value={{ session, user, profile, loading, signOut, refreshProfile, refreshAuth }}>
+    <AuthContext.Provider value={{ session, user, profile, loading, signOut, refreshProfile, refreshAuth, signUp, signIn }}>
       {children}
     </AuthContext.Provider>
   );

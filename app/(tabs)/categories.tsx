@@ -3,14 +3,14 @@ import { useNavigation } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-    FlatList,
-    Image,
-    Pressable,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  FlatList,
+  Image,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { CATEGORIES, MOCK_POSTS } from '../../constants/mockData';
 import { Colors, Radius, Shadow } from '../../constants/theme';
@@ -174,7 +174,8 @@ export default function CategoriesScreen() {
 
   // Listen for tab press events
   useEffect(() => {
-    const unsubscribe = navigation.addListener('tabPress', (e) => {
+    const unsubscribe = navigation.addListener('tabPress' as any, (e) => {
+
       // Reset to categories list when tab is pressed
       setSelected(null);
     });
