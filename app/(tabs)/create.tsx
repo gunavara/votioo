@@ -159,12 +159,20 @@ export default function CreateScreen() {
             const filename = `post-${postId}-${i}-${Date.now()}.jpg`;
             const filepath = `posts/${postId}/${filename}`;
 
-            console.log('📦 Uploading blob directly, size:', imgBlob.size, 'bytes');
+            // Convert blob to Uint8Array for proper Supabase storage handling
+            const imgArrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as ArrayBuffer);
+              reader.onerror = reject;
+              reader.readAsArrayBuffer(imgBlob);
+            });
+            const imgUint8Array = new Uint8Array(imgArrayBuffer);
+            console.log('📦 Converted to Uint8Array, size:', imgUint8Array.length, 'bytes');
             console.log('⬆️ Uploading image', i + 1, 'to:', filepath);
 
             const { error: uploadError } = await supabaseAdmin.storage
               .from('post-images')
-              .upload(filepath, imgBlob, { 
+              .upload(filepath, imgUint8Array, { 
                 upsert: true,
                 contentType: 'image/jpeg',
               });

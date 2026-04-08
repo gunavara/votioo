@@ -170,13 +170,20 @@ export default function ProfileScreen() {
       // Generate file path with user folder: {user-id}/avatar.jpg
       const filepath = `${user.id}/avatar.jpg`;
 
-      // Upload blob directly - Supabase handles it
-      console.log('📦 Uploading blob directly, size:', blob.size, 'bytes');
+      // Convert blob to Uint8Array for proper Supabase storage handling
+      const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as ArrayBuffer);
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(blob);
+      });
+      const uint8Array = new Uint8Array(arrayBuffer);
+      console.log('📦 Converted to Uint8Array, size:', uint8Array.length, 'bytes');
 
       // Upload to Supabase storage (to user's folder)
       const { error: uploadError } = await supabaseAdmin.storage
         .from('avatars')
-        .upload(filepath, blob, {
+        .upload(filepath, uint8Array, {
           cacheControl: '3600',
           upsert: true,
           contentType: 'image/jpeg',
