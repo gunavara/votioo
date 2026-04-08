@@ -54,7 +54,7 @@ export default function CreateScreen() {
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: [ImagePicker.MediaType.image],
         allowsMultiple: true,
         quality: 0.8,
       });
