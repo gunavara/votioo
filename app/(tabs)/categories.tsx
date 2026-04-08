@@ -6,12 +6,12 @@ import {
   FlatList,
   Image,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { CATEGORIES, MOCK_POSTS } from '../../constants/mockData';
 import { Colors, Radius, Shadow } from '../../constants/theme';
 import { Post } from '../../types';
