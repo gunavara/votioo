@@ -53,7 +53,6 @@ export default function AuthScreen() {
   const validateUsername = (u: string) => /^[a-zA-Z0-9_]{3,20}$/.test(u);
 
   const handleRegister = async () => {
-    // Validation
     if (!email.trim()) {
       Alert.alert('Error', 'Please enter your email');
       return;
@@ -113,6 +112,7 @@ export default function AuthScreen() {
     }
   };
 
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
@@ -129,7 +129,6 @@ export default function AuthScreen() {
         <Text style={styles.logo}>votioo</Text>
         <Text style={styles.tagline}>Ask. Vote. Decide.</Text>
 
-        {/* Choice Screen */}
         {step === 'choice' && (
           <>
             <Text style={styles.heading}>Welcome to Votioo</Text>
@@ -142,16 +141,14 @@ export default function AuthScreen() {
                 style={[styles.largeBtn, styles.primaryBtn]}
                 onPress={() => setStep('register')}
               >
-                <Text style={styles.largeBtnText}>Create Account</Text>
-                <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 8 }} />
+                <Text style={styles.largeBtnText}>Create Account →</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.largeBtn, styles.secondaryBtn]}
                 onPress={() => setStep('login')}
               >
-                <Text style={[styles.largeBtnText, { color: Colors.brand }]}>Sign In</Text>
-                <Ionicons name="arrow-forward" size={18} color={Colors.brand} style={{ marginLeft: 8 }} />
+                <Text style={[styles.largeBtnText, { color: Colors.brand }]}>Sign In →</Text>
               </TouchableOpacity>
             </View>
 
@@ -163,7 +160,6 @@ export default function AuthScreen() {
           </>
         )}
 
-        {/* Registration Screen */}
         {step === 'register' && (
           <>
             <Text style={styles.heading}>Create Account</Text>
@@ -172,7 +168,6 @@ export default function AuthScreen() {
             </Text>
 
             <View style={styles.form}>
-              {/* Email */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Email</Text>
                 <View style={styles.inputWrapper}>
@@ -191,7 +186,6 @@ export default function AuthScreen() {
                 </View>
               </View>
 
-              {/* Username */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Username</Text>
                 <View style={styles.inputWrapper}>
@@ -210,7 +204,6 @@ export default function AuthScreen() {
                 <Text style={styles.hint}>3-20 characters, letters, numbers, underscore only</Text>
               </View>
 
-              {/* Password */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Password</Text>
                 <View style={styles.inputWrapper}>
@@ -253,7 +246,6 @@ export default function AuthScreen() {
                 )}
               </View>
 
-              {/* Confirm Password */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Confirm Password</Text>
                 <View style={styles.inputWrapper}>
@@ -279,24 +271,20 @@ export default function AuthScreen() {
               </View>
 
               <TouchableOpacity
-                style={[styles.primaryBtn, styles.submitBtn, loading && { opacity: 0.6 }]}
+                style={[styles.largeBtn, styles.primaryBtn, styles.submitBtn, loading && { opacity: 0.6 }]}
                 onPress={handleRegister}
                 disabled={loading}
               >
                 {loading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <>
-                    <Text style={styles.largeBtnText}>Create Account</Text>
-                    <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 8 }} />
-                  </>
+                  <Text style={styles.largeBtnText}>Create Account →</Text>
                 )}
               </TouchableOpacity>
             </View>
           </>
         )}
 
-        {/* Login Screen */}
         {step === 'login' && (
           <>
             <Text style={styles.heading}>Sign In</Text>
@@ -305,7 +293,6 @@ export default function AuthScreen() {
             </Text>
 
             <View style={styles.form}>
-              {/* Email */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Email</Text>
                 <View style={styles.inputWrapper}>
@@ -324,7 +311,6 @@ export default function AuthScreen() {
                 </View>
               </View>
 
-              {/* Password */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Password</Text>
                 <View style={styles.inputWrapper}>
@@ -349,7 +335,6 @@ export default function AuthScreen() {
                 </View>
               </View>
 
-              {/* Stay Logged In */}
               <Pressable
                 style={styles.checkboxRow}
                 onPress={() => setStayLoggedIn(!stayLoggedIn)}
@@ -363,17 +348,14 @@ export default function AuthScreen() {
               </Pressable>
 
               <TouchableOpacity
-                style={[styles.primaryBtn, styles.submitBtn, loading && { opacity: 0.6 }]}
+                style={[styles.largeBtn, styles.primaryBtn, styles.submitBtn, loading && { opacity: 0.6 }]}
                 onPress={handleLogin}
                 disabled={loading}
               >
                 {loading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <>
-                    <Text style={styles.largeBtnText}>Sign In</Text>
-                    <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 8 }} />
-                  </>
+                  <Text style={styles.largeBtnText}>Sign In →</Text>
                 )}
               </TouchableOpacity>
 
@@ -438,15 +420,13 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   largeBtn: {
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: Radius.md,
-    paddingVertical: 15,
+    borderRadius: 16,
     paddingHorizontal: 20,
     width: '100%',
+    height: 60,
   },
-
   primaryBtn: {
     backgroundColor: Colors.brand,
   },
@@ -536,6 +516,7 @@ const styles = StyleSheet.create({
   },
   submitBtn: {
     marginTop: 8,
+    height: 60,
   },
   forgotLink: {
     fontSize: 14,

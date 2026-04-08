@@ -44,33 +44,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (userId: string) => {
-  try {
-    console.log('👤 Fetching profile for user:', userId);
-    
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    
-    if (error) {
-      console.log('⚠️ Profile not found, creating one...', error.message);
-      // Only create if it's a "not found" error, not a duplicate key error
-      if (error.code === 'PGRST116') {
-        await createProfile(userId);
+    try {
+      console.log('👤 Fetching profile for user:', userId);
+      
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      
+      if (error) {
+        console.log('⚠️ Profile not found:', error.message);
+        return;
       }
-      return;
+      
+      if (data) {
+        console.log('✅ Profile found:', data.username);
+        setProfile(data);
+      }
+    } catch (error) {
+      console.log('❌ Profile fetch exception:', error);
     }
-    
-    if (data) {
-      console.log('✅ Profile found:', data.username);
-      setProfile(data);
-    }
-  } catch (error) {
-    console.log('❌ Profile fetch exception:', error);
-  }
-};
-
+  };
 
   const createProfile = async (userId: string, username?: string) => {
     try {
@@ -121,7 +116,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log('📝 Signing up user:', email);
       
-      // Check if username already exists
       const { data: existingUser } = await supabase
         .from('profiles')
         .select('id')
@@ -132,7 +126,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { error: 'Username already taken' };
       }
 
-      // Sign up with Supabase
       const { data, error } = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
         password: password,
@@ -150,7 +143,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (data.user) {
         console.log('✅ User signed up:', data.user.email);
-        // Create profile with username
         await createProfile(data.user.id, username);
         return { error: null };
       }
@@ -179,7 +171,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (data.session && data.user) {
         console.log('✅ User signed in:', data.user.email);
         
-        // Store "stay logged in" preference
         if (stayLoggedIn) {
           await AsyncStorage.setItem(STAY_LOGGED_IN_KEY, 'true');
           console.log('💾 Stay logged in enabled');
@@ -187,7 +178,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await AsyncStorage.removeItem(STAY_LOGGED_IN_KEY);
         }
 
-        // Fetch profile
         await fetchProfile(data.user.id);
         return { error: null };
       }
@@ -206,7 +196,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         console.log('🔄 Initializing auth...');
         
-        // Try to restore session from storage
         const { data: { session: initialSession }, error } = await supabase.auth.getSession();
         
         if (error) {
@@ -236,7 +225,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     initializeAuth();
 
-    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       console.log('🔔 Auth state changed:', event);
       
