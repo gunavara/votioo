@@ -303,7 +303,7 @@ export default function CategoriesScreen() {
             </View>
           }
         />
-      )
+      )}
     </SafeAreaView>
   );
 }
