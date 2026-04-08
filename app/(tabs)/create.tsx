@@ -159,11 +159,15 @@ export default function CreateScreen() {
             const filename = `post-${postId}-${i}-${Date.now()}.jpg`;
             const filepath = `posts/${postId}/${filename}`;
 
+            // Convert blob to File object for better compatibility
+            const imgFile = new File([imgBlob], filename, { type: 'image/jpeg' });
+            console.log('📦 File object created, size:', imgFile.size, 'bytes');
+
             console.log('⬆️ Uploading image', i + 1, 'to:', filepath);
 
             const { error: uploadError } = await supabaseAdmin.storage
               .from('post-images')
-              .upload(filepath, imgBlob, { 
+              .upload(filepath, imgFile, { 
                 upsert: true,
                 contentType: 'image/jpeg',
               });
