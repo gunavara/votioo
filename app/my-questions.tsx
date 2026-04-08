@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     FlatList,
+    Image,
     StyleSheet,
     Text,
     TouchableOpacity,
@@ -33,14 +34,27 @@ export default function MyQuestionsScreen() {
 
       const { data, error } = await supabase
         .from('posts')
-        .select('*')
+        .select('*, post_images(image_url, sort_order)')
         .eq('user_id', user?.id)
         .order('created_at', { ascending: false });
 
       if (error) {
         console.log('❌ Error fetching questions:', error.message);
       } else {
-        setPosts(data || []);
+        const mappedPosts = data?.map((p: any) => ({
+          id: p.id,
+          username: p.username_snapshot,
+          avatarUrl: p.user_id ? `https://whaxkumefdykypunpoxf.supabase.co/storage/v1/object/public/avatars/${p.user_id}/avatar.jpg` : undefined,
+          question: p.question_text,
+          categories: [p.primary_category, p.secondary_category].filter(Boolean),
+          images: p.post_images?.map((i: any) => i.image_url) ?? [],
+          yesCount: p.yes_count,
+          noCount: p.no_count,
+          commentCount: p.comment_count,
+          createdAt: p.created_at,
+          userVote: p.user_vote ?? null,
+        })) || [];
+        setPosts(mappedPosts);
       }
 
       setLoading(false);
@@ -59,6 +73,25 @@ export default function MyQuestionsScreen() {
         style={styles.postCard}
         onPress={() => router.push(`/post/${item.id}`)}
       >
+        <View style={styles.postHeader}>
+          {item.avatarUrl ? (
+            <View style={styles.avatarContainer}>
+              <Image
+                source={{ uri: item.avatarUrl }}
+                style={styles.avatar}
+              />
+            </View>
+          ) : (
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{item.username[0].toUpperCase()}</Text>
+            </View>
+          )}
+          <View style={styles.headerInfo}>
+            <Text style={styles.postUsername}>@{item.username}</Text>
+            <Text style={styles.postTime}>{formatTime(item.createdAt)}</Text>
+          </View>
+        </View>
+        
         <Text style={styles.postTitle}>{item.question}</Text>
         <Text style={styles.postCategory}>{item.categories?.[0] || 'Other'}</Text>
 
@@ -70,8 +103,6 @@ export default function MyQuestionsScreen() {
             <Text style={styles.voteBtnLabel}>👎 {100 - yesPercent}%</Text>
           </View>
         </View>
-
-        <Text style={styles.postTime}>{formatTime(item.createdAt)}</Text>
       </TouchableOpacity>
     );
   };
@@ -189,6 +220,40 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
     ...Shadow.card,
+  },
+  postHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 12,
+  },
+  avatarContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: Colors.brandLight,
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.brandLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    color: Colors.brand,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  headerInfo: {
+    flex: 1,
+  },
+  postUsername: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text,
   },
   postTitle: {
     fontSize: 16,

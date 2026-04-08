@@ -1,8 +1,9 @@
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
   Image,
   Pressable,
@@ -12,9 +13,10 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { CATEGORIES, MOCK_POSTS } from '../../constants/mockData';
+import { CATEGORIES } from '../../constants/mockData';
 import { Colors, Radius, Shadow } from '../../constants/theme';
 import { Post } from '../../types';
+import { supabase } from '../../lib/supabase';
 
 // Unique color palette for each category
 const CATEGORY_COLORS: { [key: string]: string } = {
@@ -71,9 +73,18 @@ function CategoryPostCard({ post }: { post: Post }) {
     >
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{post.username[0].toUpperCase()}</Text>
-        </View>
+        {post.avatarUrl ? (
+          <View style={styles.avatarContainer}>
+            <Image
+              source={{ uri: post.avatarUrl }}
+              style={styles.avatarImage}
+            />
+          </View>
+        ) : (
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{post.username[0].toUpperCase()}</Text>
+          </View>
+        )}
         <View style={styles.headerInfo}>
           <Text style={styles.username}>@{post.username}</Text>
           <Text style={styles.time}>{timeAgo(post.createdAt)}</Text>
@@ -170,12 +181,13 @@ function CategoryPostCard({ post }: { post: Post }) {
 
 export default function CategoriesScreen() {
   const [selected, setSelected] = useState<string | null>(null);
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [loading, setLoading] = useState(false);
   const navigation = useNavigation();
 
   // Listen for tab press events
   useEffect(() => {
     const unsubscribe = navigation.addListener('tabPress' as any, (e) => {
-
       // Reset to categories list when tab is pressed
       setSelected(null);
     });
@@ -183,9 +195,52 @@ export default function CategoriesScreen() {
     return unsubscribe;
   }, [navigation]);
 
-  const filtered = selected
-    ? MOCK_POSTS.filter((p) => p.categories.includes(selected as any))
-    : MOCK_POSTS;
+  // Fetch posts when category is selected
+  useEffect(() => {
+    if (selected) {
+      fetchPostsByCategory(selected);
+    }
+  }, [selected]);
+
+  const fetchPostsByCategory = async (category: string) => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('posts')
+        .select('*, post_images(image_url, sort_order)')
+        .or(`primary_category.eq.${category},secondary_category.eq.${category}`)
+        .eq('moderation_status', 'approved')
+        .order('created_at', { ascending: false })
+        .limit(30);
+
+      if (error) {
+        console.log('❌ Error fetching posts:', error);
+        setPosts([]);
+      } else {
+        const mappedPosts = data?.map((p: any) => ({
+          id: p.id,
+          username: p.username_snapshot,
+          avatarUrl: p.user_id ? `https://whaxkumefdykypunpoxf.supabase.co/storage/v1/object/public/avatars/${p.user_id}/avatar.jpg` : undefined,
+          question: p.question_text,
+          categories: [p.primary_category, p.secondary_category].filter(Boolean),
+          images: p.post_images?.map((i: any) => i.image_url) ?? [],
+          yesCount: p.yes_count,
+          noCount: p.no_count,
+          commentCount: p.comment_count,
+          createdAt: p.created_at,
+          userVote: p.user_vote ?? null,
+        })) || [];
+        setPosts(mappedPosts);
+      }
+    } catch (error) {
+      console.log('❌ Error:', error);
+      setPosts([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filtered = posts;
 
   const categoryColor = selected 
     ? (CATEGORY_COLORS[selected] || Colors.brand) 
@@ -230,6 +285,10 @@ export default function CategoriesScreen() {
             })}
           </View>
         </View>
+      ) : loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.brand} />
+        </View>
       ) : (
         <FlatList
           data={filtered}
@@ -244,7 +303,7 @@ export default function CategoriesScreen() {
             </View>
           }
         />
-      )}
+      )
     </SafeAreaView>
   );
 }
@@ -253,6 +312,11 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   headerView: {
     flexDirection: 'row',
@@ -331,18 +395,28 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: Colors.brandLight,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 8,
+  },
+  avatarContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: Colors.brandLight,
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
   },
   avatarText: {
-    color: Colors.brand,
+    fontSize: 14,
     fontWeight: '700',
-    fontSize: 15,
+    color: Colors.brand,
   },
   headerInfo: {
     flex: 1,

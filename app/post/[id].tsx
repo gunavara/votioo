@@ -34,7 +34,7 @@ interface PostData {
 interface CommentData {
   id: string;
   post_id: string;
-  user_id: string;
+  user_id?: string;
   username_snapshot: string;
   comment_text: string;
   created_at: string;
@@ -433,11 +433,22 @@ export default function PostDetailScreen() {
             ) : (
               comments.map((c) => (
                 <View key={c.id} style={styles.commentItem}>
-                  <View style={styles.commentAvatar}>
-                    <Text style={styles.commentAvatarText}>
-                      {c.username_snapshot[0].toUpperCase()}
-                    </Text>
-                  </View>
+                  {c.user_id ? (
+                    <View style={styles.commentAvatarContainer}>
+                      <Image
+                        source={{
+                          uri: `https://whaxkumefdykypunpoxf.supabase.co/storage/v1/object/public/avatars/${c.user_id}/avatar.jpg`,
+                        }}
+                        style={styles.commentAvatarImage}
+                      />
+                    </View>
+                  ) : (
+                    <View style={styles.commentAvatar}>
+                      <Text style={styles.commentAvatarText}>
+                        {c.username_snapshot[0].toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
                   <View style={styles.commentContent}>
                     <View style={styles.commentHeader}>
                       <Text style={styles.commentUsername}>@{c.username_snapshot}</Text>
@@ -716,6 +727,17 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.brand,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  commentAvatarContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: Colors.brand,
+  },
+  commentAvatarImage: {
+    width: '100%',
+    height: '100%',
   },
   commentAvatarText: {
     fontSize: 14,
