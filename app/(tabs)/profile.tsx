@@ -170,14 +170,13 @@ export default function ProfileScreen() {
       // Generate file path with user folder: {user-id}/avatar.jpg
       const filepath = `${user.id}/avatar.jpg`;
 
-      // Convert blob to ArrayBuffer for React Native compatibility
-      const arrayBuffer = await blob.arrayBuffer();
-      console.log('📦 ArrayBuffer created, size:', arrayBuffer.byteLength, 'bytes');
+      // Upload blob directly - Supabase handles it
+      console.log('📦 Uploading blob directly, size:', blob.size, 'bytes');
 
       // Upload to Supabase storage (to user's folder)
       const { error: uploadError } = await supabaseAdmin.storage
         .from('avatars')
-        .upload(filepath, arrayBuffer, {
+        .upload(filepath, blob, {
           cacheControl: '3600',
           upsert: true,
           contentType: 'image/jpeg',

@@ -159,15 +159,12 @@ export default function CreateScreen() {
             const filename = `post-${postId}-${i}-${Date.now()}.jpg`;
             const filepath = `posts/${postId}/${filename}`;
 
-            // Convert blob to ArrayBuffer for React Native compatibility
-            const imgArrayBuffer = await imgBlob.arrayBuffer();
-            console.log('📦 ArrayBuffer created, size:', imgArrayBuffer.byteLength, 'bytes');
-
+            console.log('📦 Uploading blob directly, size:', imgBlob.size, 'bytes');
             console.log('⬆️ Uploading image', i + 1, 'to:', filepath);
 
             const { error: uploadError } = await supabaseAdmin.storage
               .from('post-images')
-              .upload(filepath, imgArrayBuffer, { 
+              .upload(filepath, imgBlob, { 
                 upsert: true,
                 contentType: 'image/jpeg',
               });
