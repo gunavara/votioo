@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Radius } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { supabase, supabaseAdmin } from '../../lib/supabase';
 
 const CATEGORIES = [
   { name: 'Shopping', emoji: '🛍️' },
@@ -161,7 +161,7 @@ export default function CreateScreen() {
 
             console.log('⬆️ Uploading image', i + 1, 'to:', filepath);
 
-            const { error: uploadError } = await supabase.storage
+            const { error: uploadError } = await supabaseAdmin.storage
               .from('post-images')
               .upload(filepath, imgBlob, { 
                 upsert: true,
@@ -177,7 +177,7 @@ export default function CreateScreen() {
             console.log('📦 Uploaded blob size was:', imgBlob.size, 'bytes');
 
             // Get public URL
-            const { data: urlData } = supabase.storage
+            const { data: urlData } = supabaseAdmin.storage
               .from('post-images')
               .getPublicUrl(filepath);
 

@@ -17,7 +17,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { Colors, Radius } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { supabase, supabaseAdmin } from '../../lib/supabase';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -171,7 +171,7 @@ export default function ProfileScreen() {
       const filepath = `${user.id}/avatar.jpg`;
 
       // Upload to Supabase storage (to user's folder)
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabaseAdmin.storage
         .from('avatars')
         .upload(filepath, blob, {
           cacheControl: '3600',
