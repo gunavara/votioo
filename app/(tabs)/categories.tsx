@@ -298,7 +298,7 @@ export default function CategoriesScreen() {
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyText}>No posts in #{selected} yet.</Text>
+              <Text style={styles.emptyText}>No posts in #{String(selected)} yet.</Text>
               <Text style={styles.emptySubtext}>Be the first to ask something!</Text>
             </View>
           }
