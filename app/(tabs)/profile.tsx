@@ -17,7 +17,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors, Radius } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
-import { supabase, supabaseAdmin } from '../../lib/supabase';
+import { devError, devLog } from '../../lib/devLog';
+import { uploadAvatarForUser } from '../../lib/storage';
+import { supabase } from '../../lib/supabase';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -30,6 +32,11 @@ export default function ProfileScreen() {
   const [bioModalVisible, setBioModalVisible] = useState(false);
   const [editBio, setEditBio] = useState(profile?.bio || '');
   const [savingBio, setSavingBio] = useState(false);
+  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
   const [privacyModalVisible, setPrivacyModalVisible] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(profile?.avatar_url || null);
@@ -53,9 +60,11 @@ export default function ProfileScreen() {
       
       if (data?.avatar_url) {
         setAvatarUrl(data.avatar_url);
+      } else {
+        setAvatarUrl(null);
       }
     } catch (error) {
-      console.log('Error loading avatar:', error);
+      setAvatarUrl(null);
     }
   };
 
@@ -70,7 +79,7 @@ export default function ProfileScreen() {
         .eq('user_id', user?.id);
 
       if (qError) {
-        console.log('❌ Error fetching questions:', qError.message);
+        devError('Error fetching questions:', qError.message);
       } else {
         setQuestionsCount(qCount || 0);
       }
@@ -82,14 +91,14 @@ export default function ProfileScreen() {
         .eq('user_id', user?.id);
 
       if (vError) {
-        console.log('❌ Error fetching votes:', vError.message);
+        devError('Error fetching votes:', vError.message);
       } else {
         setVotesCount(vCount || 0);
       }
 
       setLoading(false);
     } catch (error) {
-      console.log('❌ Error fetching stats:', error);
+      devError('Error fetching stats:', error);
       setLoading(false);
     }
   };
@@ -122,6 +131,14 @@ export default function ProfileScreen() {
   };
 
   const handleChangeAvatar = async () => {
+    Alert.alert('Change avatar', 'Choose how you want to update your avatar.', [
+      { text: 'Camera', onPress: takeAvatarPhoto },
+      { text: 'Gallery', onPress: pickAvatarFromLibrary },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const pickAvatarFromLibrary = async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
@@ -130,7 +147,7 @@ export default function ProfileScreen() {
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: [ImagePicker.MediaType.image],
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -138,10 +155,32 @@ export default function ProfileScreen() {
 
       if (result.canceled) return;
 
-      const imageUri = result.assets[0].uri;
-      await uploadAvatar(imageUri);
+      await uploadAvatar(result.assets[0].uri);
     } catch (error: any) {
       Alert.alert('Error', error?.message || 'Failed to pick photo');
+    }
+  };
+
+  const takeAvatarPhoto = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'We need access to your camera to take a photo.');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (result.canceled) return;
+
+      await uploadAvatar(result.assets[0].uri);
+    } catch (error: any) {
+      Alert.alert('Error', error?.message || 'Failed to take photo');
     }
   };
 
@@ -150,194 +189,89 @@ export default function ProfileScreen() {
 
     try {
       setUploadingAvatar(true);
-      console.log('📤 Starting avatar upload from:', imageUri);
-
-      // Read the image file using fetch
-      console.log('📤 Fetching image from URI:', imageUri);
-      const response = await fetch(imageUri);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch image: ${response.statusText}`);
-      }
-      
-      const blob = await response.blob();
-      console.log('✅ Image fetched successfully, blob size:', blob.size, 'bytes');
-      
-      if (blob.size === 0) {
-        throw new Error('Image blob is empty - file may not exist or is corrupted');
-      }
-
-      // Generate file path with user folder: {user-id}/avatar.jpg
-      const filepath = `${user.id}/avatar.jpg`;
-
-      // Convert blob to Uint8Array for proper Supabase storage handling
-      const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as ArrayBuffer);
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(blob);
-      });
-      const uint8Array = new Uint8Array(arrayBuffer);
-      console.log('📦 Converted to Uint8Array, size:', uint8Array.length, 'bytes');
-
-      // Upload to Supabase storage (to user's folder)
-      const { error: uploadError } = await supabaseAdmin.storage
-        .from('avatars')
-        .upload(filepath, uint8Array, {
-          cacheControl: '3600',
-          upsert: true,
-          contentType: 'image/jpeg',
-        });
-
-      if (uploadError) {
-        console.log('❌ Upload error:', uploadError);
-        Alert.alert('Upload Error', uploadError.message);
-        return;
-      }
-
-      console.log('✅ Avatar file uploaded successfully to:', filepath);
-      console.log('📦 Uploaded blob size was:', blob.size, 'bytes');
-
-      // Get public URL
-      const { data } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(filepath);
-
-      const publicUrl = data.publicUrl;
-      console.log('🔗 Public URL:', publicUrl);
-      
-      // Verify the file was uploaded by checking its size
-      try {
-        const verifyResponse = await fetch(publicUrl);
-        const verifyBlob = await verifyResponse.blob();
-        console.log('📊 Avatar file size from server:', verifyBlob.size, 'bytes');
-        if (verifyBlob.size === 0) {
-          console.warn('⚠️ Warning: Avatar file on server is empty!');
-        }
-      } catch (e) {
-        console.log('⚠️ Could not verify file:', e);
-      }
+      const publicUrl = await uploadAvatarForUser(user.id, imageUri);
 
       // Update profile with avatar URL
-      console.log('📤 Updating profile with avatar URL:', publicUrl);
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ avatar_url: publicUrl })
         .eq('id', user.id);
 
       if (updateError) {
-        console.log('❌ Profile update error:', updateError);
         Alert.alert('Error', 'Failed to save avatar URL: ' + updateError.message);
         return;
       }
 
-      console.log('✅ Profile updated with avatar URL');
       setAvatarUrl(publicUrl);
       await refreshProfile();
       Alert.alert('Success', 'Avatar updated!');
     } catch (error: any) {
-      console.error('❌ Avatar upload failed:', error);
       Alert.alert('Error', error?.message || 'Failed to upload avatar');
     } finally {
       setUploadingAvatar(false);
     }
   };
 
-  const handleChangePassword = () => {
-    // Step 1: Ask for current password
-    Alert.prompt(
-      'Change Password',
-      'Enter your current password:',
-      [
-        {
-          text: 'Cancel',
-          onPress: () => {},
-          style: 'cancel',
-        },
-        {
-          text: 'Next',
-          onPress: (currentPassword: string | undefined) => {
-            if (!currentPassword) {
-              Alert.alert('Error', 'Please enter your current password');
-              return;
-            }
+  const openPasswordModal = () => {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordModalVisible(true);
+  };
 
-            // Step 2: Ask for new password
-            Alert.prompt(
-              'Change Password',
-              'Enter your new password (min 8 characters):',
-              [
-                {
-                  text: 'Cancel',
-                  onPress: () => {},
-                  style: 'cancel',
-                },
-                {
-                  text: 'Next',
-                  onPress: (newPassword: string | undefined) => {
-                    if (!newPassword || newPassword.length < 8) {
-                      Alert.alert('Error', 'Password must be at least 8 characters');
-                      return;
-                    }
+  const handleChangePassword = async () => {
+    if (!user?.email) {
+      Alert.alert('Error', 'No account email found for this user.');
+      return;
+    }
 
-                    // Step 3: Ask for confirmation
-                    Alert.prompt(
-                      'Change Password',
-                      'Repeat your new password:',
-                      [
-                        {
-                          text: 'Cancel',
-                          onPress: () => {},
-                          style: 'cancel',
-                        },
-                        {
-                          text: 'Change',
-                          onPress: async (confirmPassword: string | undefined) => {
-                            if (confirmPassword !== newPassword) {
-                              Alert.alert('Error', 'Passwords do not match');
-                              return;
-                            }
+    if (!currentPassword) {
+      Alert.alert('Error', 'Please enter your current password.');
+      return;
+    }
 
-                            try {
-                              // Verify current password by attempting to sign in
-                              const { error: signInError } = await supabase.auth.signInWithPassword({
-                                email: user?.email || '',
-                                password: currentPassword,
-                              });
+    if (newPassword.length < 8) {
+      Alert.alert('Error', 'New password must be at least 8 characters.');
+      return;
+    }
 
-                              if (signInError) {
-                                Alert.alert('Error', 'Current password is incorrect');
-                                return;
-                              }
+    if (newPassword !== confirmPassword) {
+      Alert.alert('Error', 'New passwords do not match.');
+      return;
+    }
 
-                              // Update to new password
-                              const { error } = await supabase.auth.updateUser({
-                                password: newPassword,
-                              });
+    try {
+      setSavingPassword(true);
 
-                              if (error) {
-                                Alert.alert('Error', error.message);
-                              } else {
-                                Alert.alert('Success', 'Password changed successfully!');
-                              }
-                            } catch (error: any) {
-                              Alert.alert('Error', error?.message || 'Failed to change password');
-                            }
-                          },
-                        },
-                      ],
-                      'secure-text'
-                    );
-                  },
-                },
-              ],
-              'secure-text'
-            );
-          },
-        },
-      ],
-      'secure-text'
-    );
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: currentPassword,
+      });
+
+      if (signInError) {
+        Alert.alert('Error', 'Current password is incorrect.');
+        return;
+      }
+
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        Alert.alert('Error', error.message);
+        return;
+      }
+
+      setPasswordModalVisible(false);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      Alert.alert('Success', 'Password changed successfully.');
+    } catch (error: any) {
+      Alert.alert('Error', error?.message || 'Failed to change password.');
+    } finally {
+      setSavingPassword(false);
+    }
   };
 
   if (!isLoggedIn) {
@@ -381,7 +315,7 @@ export default function ProfileScreen() {
                 source={{ uri: avatarUrl }}
                 style={styles.avatarImage}
                 onError={() => {
-                  console.log('❌ Avatar image failed to load');
+                  devLog('Avatar image failed to load');
                   setAvatarUrl(null);
                 }}
               />
@@ -390,6 +324,7 @@ export default function ProfileScreen() {
             )}
             {uploadingAvatar && <ActivityIndicator style={styles.uploadingOverlay} color="white" />}
           </TouchableOpacity>
+          <Text style={styles.avatarHint}>Tap photo to change avatar</Text>
           <Text style={styles.username}>@{profile?.username ?? 'user'}</Text>
           
           {/* Bio with edit button */}
@@ -438,7 +373,7 @@ export default function ProfileScreen() {
           {/* Edit Profile */}
           <TouchableOpacity
             style={styles.row}
-            onPress={handleChangePassword}
+            onPress={openPasswordModal}
           >
             <Ionicons name="lock-closed-outline" size={20} color={Colors.brand} />
             <Text style={styles.rowLabel}>Change Password</Text>
@@ -474,6 +409,68 @@ export default function ProfileScreen() {
             <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
           </TouchableOpacity>
         </View>
+
+        <Modal visible={passwordModalVisible} animationType="slide" transparent>
+          <SafeAreaView style={styles.modalContainer}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <TouchableOpacity onPress={() => setPasswordModalVisible(false)}>
+                  <Text style={styles.modalCancel}>Cancel</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalTitle}>Change Password</Text>
+                <TouchableOpacity onPress={handleChangePassword} disabled={savingPassword}>
+                  {savingPassword ? (
+                    <ActivityIndicator color={Colors.brand} />
+                  ) : (
+                    <Text style={styles.modalSave}>Save</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.formSection}>
+                <Text style={styles.formHelper}>
+                  Choose a new password with at least 8 characters.
+                </Text>
+
+                <Text style={styles.inputLabel}>Current password</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="Enter current password"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={currentPassword}
+                  onChangeText={setCurrentPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  editable={!savingPassword}
+                />
+
+                <Text style={styles.inputLabel}>New password</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="At least 8 characters"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={newPassword}
+                  onChangeText={setNewPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  editable={!savingPassword}
+                />
+
+                <Text style={styles.inputLabel}>Confirm new password</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="Repeat new password"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  editable={!savingPassword}
+                />
+              </View>
+            </View>
+          </SafeAreaView>
+        </Modal>
 
         {/* Bio Modal */}
         <Modal visible={bioModalVisible} animationType="slide" transparent>
@@ -577,6 +574,11 @@ const styles = StyleSheet.create({
     fontSize: 40,
     fontWeight: 'bold',
     color: 'white',
+  },
+  avatarHint: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+    marginBottom: 8,
   },
   username: {
     fontSize: 18,
@@ -682,13 +684,15 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
   },
   modalContent: {
-    flex: 1,
     backgroundColor: Colors.background,
-    marginTop: 'auto',
-    borderTopLeftRadius: Radius.lg,
-    borderTopRightRadius: Radius.lg,
+    borderRadius: Radius.lg,
+    marginHorizontal: 8,
+    marginBottom: 8,
+    maxHeight: '78%',
+    minHeight: 360,
     paddingBottom: 24,
   },
   modalHeader: {
@@ -700,30 +704,57 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+    marginBottom: 8,
+    marginTop: 12,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.card,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: Colors.text,
+  },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '600',
     color: Colors.text,
+    textAlign: 'center',
   },
   modalCancel: {
     fontSize: 16,
     color: Colors.textSecondary,
-    width: 50,
+    minWidth: 72,
   },
   modalClose: {
     fontSize: 16,
     color: Colors.brand,
-    width: 50,
+    minWidth: 72,
   },
   modalSave: {
     fontSize: 16,
     color: Colors.brand,
     fontWeight: '600',
-    width: 50,
+    minWidth: 72,
     textAlign: 'right',
   },
+  formSection: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  formHelper: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: Colors.textSecondary,
+    marginBottom: 4,
+  },
   bioInput: {
-    flex: 1,
     marginHorizontal: 16,
     marginTop: 16,
     paddingHorizontal: 12,
@@ -734,6 +765,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.text,
     textAlignVertical: 'top',
+    minHeight: 220,
+    maxHeight: 320,
   },
   charCount: {
     marginHorizontal: 16,

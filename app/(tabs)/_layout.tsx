@@ -1,8 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
+import { useNotifications } from '../../context/NotificationsContext';
 import { Colors } from '../../constants/theme';
 
 export default function TabLayout() {
+  const { unreadCount } = useNotifications();
+
   return (
     <Tabs
       screenOptions={{
@@ -57,6 +60,11 @@ export default function TabLayout() {
         name="notifications"
         options={{
           title: 'Alerts',
+          tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
+          tabBarBadgeStyle: {
+            backgroundColor: Colors.brand,
+            color: 'white',
+          },
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? 'notifications' : 'notifications-outline'} size={24} color={color} />
           ),

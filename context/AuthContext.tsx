@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Session, User } from '@supabase/supabase-js';
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { devError, devLog } from '../lib/devLog';
 import { supabase } from '../lib/supabase';
 
 interface Profile {
@@ -45,8 +46,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fetchProfile = async (userId: string) => {
     try {
-      console.log('👤 Fetching profile for user:', userId);
-      
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -54,16 +53,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .single();
       
       if (error) {
-        console.log('⚠️ Profile not found:', error.message);
+        devLog('Profile not found:', error.message);
         return;
       }
       
       if (data) {
-        console.log('✅ Profile found:', data.username);
         setProfile(data);
       }
     } catch (error) {
-      console.log('❌ Profile fetch exception:', error);
+      devError('Profile fetch exception:', error);
     }
   };
 
@@ -80,16 +78,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .single();
 
       if (error) {
-        console.log('❌ Profile creation error:', error.message);
+        devError('Profile creation error:', error.message);
         return;
       }
 
       if (data) {
-        console.log('✅ Profile created:', data.username);
         setProfile(data);
       }
     } catch (error) {
-      console.log('❌ Profile creation exception:', error);
+      devError('Profile creation exception:', error);
     }
   };
 
@@ -108,14 +105,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfile(null);
       }
     } catch (error) {
-      console.log('❌ Refresh auth error:', error);
+      devError('Refresh auth error:', error);
     }
   };
 
   const signUp = async (email: string, password: string, username: string) => {
     try {
-      console.log('📝 Signing up user:', email);
-      
       const { data: existingUser } = await supabase
         .from('profiles')
         .select('id')
@@ -137,43 +132,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (error) {
-        console.log('❌ Sign up error:', error.message);
         return { error: error.message };
       }
 
       if (data.user) {
-        console.log('✅ User signed up:', data.user.email);
         await createProfile(data.user.id, username);
         return { error: null };
       }
 
       return { error: 'Unknown error during sign up' };
     } catch (error: any) {
-      console.log('❌ Sign up exception:', error);
+      devError('Sign up exception:', error);
       return { error: error?.message || 'An error occurred' };
     }
   };
 
   const signIn = async (email: string, password: string, stayLoggedIn: boolean) => {
     try {
-      console.log('🔐 Signing in user:', email);
-      
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
         password: password,
       });
 
       if (error) {
-        console.log('❌ Sign in error:', error.message);
         return { error: error.message };
       }
 
       if (data.session && data.user) {
-        console.log('✅ User signed in:', data.user.email);
-        
         if (stayLoggedIn) {
           await AsyncStorage.setItem(STAY_LOGGED_IN_KEY, 'true');
-          console.log('💾 Stay logged in enabled');
         } else {
           await AsyncStorage.removeItem(STAY_LOGGED_IN_KEY);
         }
@@ -184,7 +171,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       return { error: 'Unknown error during sign in' };
     } catch (error: any) {
-      console.log('❌ Sign in exception:', error);
+      devError('Sign in exception:', error);
       return { error: error?.message || 'An error occurred' };
     }
   };
@@ -194,16 +181,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const initializeAuth = async () => {
       try {
-        console.log('🔄 Initializing auth...');
-        
         const { data: { session: initialSession }, error } = await supabase.auth.getSession();
         
         if (error) {
-          console.log('❌ Session fetch error:', error.message);
+          devError('Session fetch error:', error.message);
         }
 
         if (mounted) {
-          console.log('✅ Session found:', !!initialSession);
           setSession(initialSession);
           setUser(initialSession?.user ?? null);
           
@@ -216,7 +200,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setLoading(false);
         }
       } catch (error) {
-        console.log('❌ Auth initialization error:', error);
+        devError('Auth initialization error:', error);
         if (mounted) {
           setLoading(false);
         }
@@ -225,9 +209,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     initializeAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
-      console.log('🔔 Auth state changed:', event);
-      
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
       if (mounted) {
         setSession(newSession);
         setUser(newSession?.user ?? null);
@@ -248,15 +230,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     try {
-      console.log('🔓 Signing out...');
       await supabase.auth.signOut();
       await AsyncStorage.removeItem(STAY_LOGGED_IN_KEY);
       setSession(null);
       setUser(null);
       setProfile(null);
-      console.log('✅ Signed out successfully');
     } catch (error) {
-      console.log('❌ Sign out error:', error);
+      devError('Sign out error:', error);
     }
   };
 

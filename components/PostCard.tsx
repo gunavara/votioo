@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
+  Alert,
   Image,
   Pressable,
   StyleSheet,
@@ -10,11 +11,13 @@ import {
   View,
 } from 'react-native';
 import { Colors, Radius, Shadow } from '../constants/theme';
+import { useAuth } from '../context/AuthContext';
+import { submitVote } from '../lib/votes';
 import { Post } from '../types';
 
 interface Props {
   post: Post;
-  onVote?: (postId: string, vote: 'yes' | 'no') => void;
+  onVote?: () => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -29,6 +32,7 @@ function timeAgo(dateStr: string): string {
 
 export default function PostCard({ post, onVote }: Props) {
   const router = useRouter();
+  const { user } = useAuth();
   const [localVote, setLocalVote] = useState<'yes' | 'no' | null>(post.userVote ?? null);
   const [yesCt, setYesCt] = useState(post.yesCount);
   const [noCt, setNoCt] = useState(post.noCount);
@@ -38,12 +42,34 @@ export default function PostCard({ post, onVote }: Props) {
   const noPercent = total > 0 ? Math.round((noCt / total) * 100) : 50;
   const yesLeading = yesCt >= noCt;
 
-  const handleVote = (vote: 'yes' | 'no') => {
+  const handleVote = async (vote: 'yes' | 'no') => {
     if (localVote) return;
-    setLocalVote(vote);
-    if (vote === 'yes') setYesCt((c) => c + 1);
-    else setNoCt((c) => c + 1);
-    onVote?.(post.id, vote);
+
+    if (!user) {
+      Alert.alert('Sign in required', 'You need to sign in to vote.');
+      return;
+    }
+
+    try {
+      const result = await submitVote({
+        postId: post.id,
+        userId: user.id,
+        vote,
+      });
+
+      if (result.alreadyVoted) {
+        setLocalVote(vote);
+        onVote?.();
+        return;
+      }
+
+      setLocalVote(vote);
+      if (vote === 'yes') setYesCt((c) => c + 1);
+      else setNoCt((c) => c + 1);
+      onVote?.();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to submit vote.');
+    }
   };
 
   return (
@@ -140,6 +166,11 @@ export default function PostCard({ post, onVote }: Props) {
             </Text>
           )}
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.voteRatioRow}>
+        <Text style={styles.voteRatioText}>{yesPercent}% yes</Text>
+        <Text style={styles.voteRatioText}>{noPercent}% no</Text>
       </View>
 
       {/* Footer */}
@@ -250,7 +281,7 @@ const styles = StyleSheet.create({
   voteRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 10,
+    marginBottom: 6,
   },
   voteBtn: {
     flex: 1,
@@ -258,37 +289,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 11,
+    paddingVertical: 8,
     borderRadius: Radius.md,
-    borderWidth: 1.5,
+    borderWidth: 1.25,
   },
   yesBtn: {
     borderColor: Colors.yes,
-    backgroundColor: Colors.yesLight,
+    backgroundColor: '#F2FBF5',
   },
   yesBtnActive: {
     backgroundColor: Colors.yes,
     borderColor: Colors.yes,
   },
   yesBtnLeading: {
-    paddingVertical: 13,
+    paddingVertical: 9,
   },
   noBtn: {
     borderColor: Colors.no,
-    backgroundColor: Colors.noLight,
+    backgroundColor: '#FFF4F6',
   },
   noBtnActive: {
     backgroundColor: Colors.no,
     borderColor: Colors.no,
   },
   noBtnLeading: {
-    paddingVertical: 13,
+    paddingVertical: 9,
   },
   voteBtnEmoji: {
-    fontSize: 16,
+    fontSize: 15,
   },
   voteBtnLabel: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: Colors.text,
   },
@@ -299,7 +330,7 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   votePercent: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: Colors.textSecondary,
   },
@@ -308,6 +339,17 @@ const styles = StyleSheet.create({
   },
   votePercentActiveNo: {
     color: '#fff',
+  },
+  voteRatioRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  voteRatioText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textSecondary,
   },
   footer: {
     flexDirection: 'row',

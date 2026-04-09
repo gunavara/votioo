@@ -1,9 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   Pressable,
@@ -15,6 +16,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CATEGORIES } from '../../constants/mockData';
 import { Colors, Radius, Shadow } from '../../constants/theme';
+import { useAuth } from '../../context/AuthContext';
+import { devError, devLog } from '../../lib/devLog';
+import { fetchAvatarUrls } from '../../lib/profileLookup';
+import { submitVote } from '../../lib/votes';
 import { Post } from '../../types';
 import { supabase } from '../../lib/supabase';
 
@@ -42,8 +47,9 @@ function timeAgo(dateStr: string): string {
 }
 
 // Inline PostCard component for categories view
-function CategoryPostCard({ post }: { post: Post }) {
+function CategoryPostCard({ post, onVoteSuccess }: { post: Post; onVoteSuccess?: () => void }) {
   const router = useRouter();
+  const { user } = useAuth();
   const [localVote, setLocalVote] = useState<'yes' | 'no' | null>(post.userVote ?? null);
   const [yesCt, setYesCt] = useState(post.yesCount);
   const [noCt, setNoCt] = useState(post.noCount);
@@ -53,11 +59,34 @@ function CategoryPostCard({ post }: { post: Post }) {
   const noPercent = total > 0 ? Math.round((noCt / total) * 100) : 50;
   const yesLeading = yesCt >= noCt;
 
-  const handleVote = (vote: 'yes' | 'no') => {
+  const handleVote = async (vote: 'yes' | 'no') => {
     if (localVote) return;
-    setLocalVote(vote);
-    if (vote === 'yes') setYesCt((c) => c + 1);
-    else setNoCt((c) => c + 1);
+
+    if (!user) {
+      Alert.alert('Sign in required', 'You need to sign in to vote.');
+      return;
+    }
+
+    try {
+      const result = await submitVote({
+        postId: post.id,
+        userId: user.id,
+        vote,
+      });
+
+      if (result.alreadyVoted) {
+        setLocalVote(vote);
+        onVoteSuccess?.();
+        return;
+      }
+
+      setLocalVote(vote);
+      if (vote === 'yes') setYesCt((c) => c + 1);
+      else setNoCt((c) => c + 1);
+      onVoteSuccess?.();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to submit vote.');
+    }
   };
 
   return (
@@ -67,7 +96,7 @@ function CategoryPostCard({ post }: { post: Post }) {
         try {
           router.push(`/post/${post.id}`);
         } catch (e) {
-          console.log('Navigation error:', e);
+          devLog('Navigation error:', e);
         }
       }}
     >
@@ -180,10 +209,17 @@ function CategoryPostCard({ post }: { post: Post }) {
 }
 
 export default function CategoriesScreen() {
+  const { category } = useLocalSearchParams<{ category?: string }>();
   const [selected, setSelected] = useState<string | null>(null);
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
   const navigation = useNavigation();
+
+  useEffect(() => {
+    if (typeof category === 'string' && category.length > 0) {
+      setSelected(category);
+    }
+  }, [category]);
 
   // Listen for tab press events
   useEffect(() => {
@@ -214,13 +250,14 @@ export default function CategoriesScreen() {
         .limit(30);
 
       if (error) {
-        console.log('❌ Error fetching posts:', error);
+        devError('Error fetching posts:', error);
         setPosts([]);
       } else {
+        const avatarUrls = await fetchAvatarUrls(data?.map((post: any) => post.user_id) ?? []);
         const mappedPosts = data?.map((p: any) => ({
           id: p.id,
           username: p.username_snapshot,
-          avatarUrl: p.user_id ? `https://whaxkumefdykypunpoxf.supabase.co/storage/v1/object/public/avatars/${p.user_id}/avatar.jpg` : undefined,
+          avatarUrl: avatarUrls.get(p.user_id) ?? undefined,
           question: p.question_text,
           categories: [p.primary_category, p.secondary_category].filter(Boolean),
           images: p.post_images?.map((i: any) => i.image_url) ?? [],
@@ -233,7 +270,7 @@ export default function CategoriesScreen() {
         setPosts(mappedPosts);
       }
     } catch (error) {
-      console.log('❌ Error:', error);
+      devError('Categories fetch error:', error);
       setPosts([]);
     } finally {
       setLoading(false);
@@ -269,6 +306,10 @@ export default function CategoriesScreen() {
       {/* Show chips or posts based on selection */}
       {!selected ? (
         <View style={styles.chipsContainer}>
+          <Text style={styles.introTitle}>Browse by vibe</Text>
+          <Text style={styles.introText}>
+            Pick a category to see focused questions from the community.
+          </Text>
           <View style={styles.chipsGrid}>
             {CATEGORIES.map((cat) => {
               const color = CATEGORY_COLORS[cat.name] || Colors.brand;
@@ -288,12 +329,20 @@ export default function CategoriesScreen() {
       ) : loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={Colors.brand} />
+          <Text style={styles.loadingText}>Loading #{selected} questions...</Text>
         </View>
       ) : (
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <CategoryPostCard post={item} />}
+          renderItem={({ item }) => (
+            <CategoryPostCard
+              post={item}
+              onVoteSuccess={() => {
+                if (selected) fetchPostsByCategory(selected);
+              }}
+            />
+          )}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
@@ -343,6 +392,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 20,
   },
+  introTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.text,
+    marginBottom: 6,
+    paddingHorizontal: 4,
+  },
+  introText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: Colors.textSecondary,
+    marginBottom: 18,
+    paddingHorizontal: 4,
+  },
   chipsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -380,6 +443,11 @@ const styles = StyleSheet.create({
   emptySubtext: {
     color: Colors.textTertiary,
     fontSize: 14,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: Colors.textSecondary,
   },
   // PostCard styles
   card: {

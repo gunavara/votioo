@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     FlatList,
@@ -13,6 +14,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Radius, Shadow } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
+import { devError } from '../lib/devLog';
+import { fetchAvatarUrls } from '../lib/profileLookup';
 import { supabase } from '../lib/supabase';
 import { Post } from '../types';
 
@@ -28,6 +31,14 @@ export default function MyQuestionsScreen() {
     }
   }, [user]);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (user) {
+        fetchMyQuestions();
+      }
+    }, [user])
+  );
+
   const fetchMyQuestions = async () => {
     try {
       setLoading(true);
@@ -39,12 +50,13 @@ export default function MyQuestionsScreen() {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.log('❌ Error fetching questions:', error.message);
+        devError('Error fetching questions:', error.message);
       } else {
+        const avatarUrls = await fetchAvatarUrls(data?.map((post: any) => post.user_id) ?? []);
         const mappedPosts = data?.map((p: any) => ({
           id: p.id,
           username: p.username_snapshot,
-          avatarUrl: p.user_id ? `https://whaxkumefdykypunpoxf.supabase.co/storage/v1/object/public/avatars/${p.user_id}/avatar.jpg` : undefined,
+          avatarUrl: avatarUrls.get(p.user_id) ?? undefined,
           question: p.question_text,
           categories: [p.primary_category, p.secondary_category].filter(Boolean),
           images: p.post_images?.map((i: any) => i.image_url) ?? [],
@@ -59,7 +71,7 @@ export default function MyQuestionsScreen() {
 
       setLoading(false);
     } catch (error) {
-      console.log('❌ Error:', error);
+      devError('My questions fetch error:', error);
       setLoading(false);
     }
   };
@@ -119,15 +131,7 @@ export default function MyQuestionsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="chevron-back" size={24} color={Colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.title}>My Questions</Text>
-        <View style={{ width: 24 }} />
-      </View>
-
+    <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
       {loading ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={Colors.brand} />
@@ -161,21 +165,6 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: Colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: Colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: Colors.text,
   },
   centerContainer: {
     flex: 1,

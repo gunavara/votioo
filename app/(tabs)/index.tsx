@@ -1,3 +1,4 @@
+import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -14,19 +15,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import PostCard from '../../components/PostCard';
 import { Colors } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
+import { devError } from '../../lib/devLog';
+import { fetchAvatarUrls } from '../../lib/profileLookup';
 import { supabase } from '../../lib/supabase';
 import { Post } from '../../types';
 
-function mapDbPost(p: any): Post {
-  // Generate avatar URL from user ID if avatar exists
-  const avatarUrl = p.user_id 
-    ? `https://whaxkumefdykypunpoxf.supabase.co/storage/v1/object/public/avatars/${p.user_id}/avatar.jpg`
-    : null;
-  
+function mapDbPost(p: any, avatarUrls: Map<string, string>): Post {
   return {
     id: p.id,
     username: p.username_snapshot,
-    avatarUrl: avatarUrl,
+    avatarUrl: avatarUrls.get(p.user_id) ?? undefined,
     question: p.question_text,
     categories: [p.primary_category, p.secondary_category].filter(Boolean),
     images: p.post_images?.map((i: any) => i.image_url) ?? [],
@@ -40,22 +38,12 @@ function mapDbPost(p: any): Post {
 
 export default function FeedScreen() {
   const router = useRouter();
-  const { user, profile, loading, signOut } = useAuth();
+  const { user, profile, loading } = useAuth();
   const [posts, setPosts] = useState<Post[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [useMock, setUseMock] = useState(false);
   const [filter, setFilter] = useState<'latest' | 'hot'>('latest');
-
-  // DEBUG: Log auth state
-  useEffect(() => {
-    console.log('🔍 Auth Debug:', {
-      user: user?.email,
-      profile: profile?.username,
-      loading,
-      hasSession: !!user,
-    });
-  }, [user, profile, loading]);
 
   const loadPosts = useCallback(async () => {
       const { data, error } = await supabase
@@ -66,17 +54,16 @@ export default function FeedScreen() {
         .limit(30);
 
     if (error) {
-      console.error('Error loading posts:', error);
+      devError('Error loading posts:', error);
       setPosts([]);
       setUseMock(false);
     } else if (!data || data.length === 0) {
-      console.log('No posts found');
       setPosts([]);
       setUseMock(false);
     } else {
-      console.log('Loaded', data.length, 'posts');
       setUseMock(false);
-      const mappedPosts = data.map(mapDbPost);
+      const avatarUrls = await fetchAvatarUrls(data.map((post: any) => post.user_id));
+      const mappedPosts = data.map((post: any) => mapDbPost(post, avatarUrls));
       const sortedPosts = sortPosts(mappedPosts, filter);
       setPosts(sortedPosts);
     }
@@ -99,6 +86,11 @@ export default function FeedScreen() {
   };
 
   useEffect(() => { loadPosts(); }, [loadPosts]);
+  useFocusEffect(
+    useCallback(() => {
+      loadPosts();
+    }, [loadPosts])
+  );
 
   const onRefresh = () => { setRefreshing(true); loadPosts(); };
 
@@ -111,7 +103,7 @@ export default function FeedScreen() {
         </View>
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={Colors.brand} />
-          <Text style={styles.debugText}>Checking session...</Text>
+          <Text style={styles.debugText}>Restoring session...</Text>
         </View>
       </SafeAreaView>
     );
@@ -120,7 +112,12 @@ export default function FeedScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <Text style={styles.logo}>votioo</Text>
+        <View>
+          <Text style={styles.logo}>votioo</Text>
+          <Text style={styles.headerSubtitle}>
+            {user ? 'Fresh questions from the community' : 'Vote fast on real questions'}
+          </Text>
+        </View>
         {user ? (
           <TouchableOpacity style={styles.avatarBtn} onPress={() => router.push('/(tabs)/profile')}>
             {profile?.avatar_url && profile.avatar_url.length > 0 ? (
@@ -175,7 +172,7 @@ export default function FeedScreen() {
               filter === 'hot' && styles.filterBtnTextActive,
             ]}
           >
-            🔥 Hot
+            Hot
           </Text>
         </TouchableOpacity>
       </View>
@@ -194,7 +191,11 @@ export default function FeedScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.brand} />}
           ListEmptyComponent={
             <View style={styles.centered}>
-              <Text style={styles.emptyText}>No questions yet. Be the first to ask!</Text>
+              <Text style={styles.emptyTitle}>Nothing here yet</Text>
+              <Text style={styles.emptyText}>Be the first to ask something and get the conversation started.</Text>
+              <TouchableOpacity style={styles.emptyCta} onPress={() => router.push('/(tabs)/create')}>
+                <Text style={styles.emptyCtaText}>Ask the first question</Text>
+              </TouchableOpacity>
             </View>
           }
         />
@@ -211,6 +212,12 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.card, borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   logo: { fontSize: 22, fontWeight: '800', color: Colors.brand, letterSpacing: -0.5 },
+  headerSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    color: Colors.textTertiary,
+    fontWeight: '500',
+  },
   signInBtn: { backgroundColor: Colors.brand, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
   signInText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   avatarBtn: {},
@@ -224,7 +231,7 @@ const styles = StyleSheet.create({
   filterContainer: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
     gap: 8,
     backgroundColor: Colors.card,
     borderBottomWidth: 1,
@@ -232,7 +239,7 @@ const styles = StyleSheet.create({
   },
   filterBtn: {
     flex: 1,
-    paddingVertical: 8,
+    paddingVertical: 9,
     paddingHorizontal: 12,
     borderRadius: 8,
     backgroundColor: Colors.background,
@@ -256,6 +263,24 @@ const styles = StyleSheet.create({
 
   list: { padding: 16, paddingBottom: 32 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, marginTop: 60 },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.text,
+    marginBottom: 8,
+  },
   emptyText: { color: Colors.textTertiary, fontSize: 15, textAlign: 'center' },
+  emptyCta: {
+    marginTop: 18,
+    backgroundColor: Colors.brand,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 999,
+  },
+  emptyCtaText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
+  },
   debugText: { color: Colors.textTertiary, fontSize: 14, marginTop: 12 },
 });

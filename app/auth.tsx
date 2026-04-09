@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,8 +15,10 @@ import {
 } from 'react-native';
 import { Colors, Radius } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
-type Step = 'choice' | 'register' | 'login';
+type Step = 'choice' | 'register' | 'login' | 'reset';
+const PASSWORD_RESET_REDIRECT = 'votioo://auth?mode=reset';
 
 // Password strength validator
 const getPasswordStrength = (password: string): { score: number; label: string; color: string } => {
@@ -35,6 +37,11 @@ const getPasswordStrength = (password: string): { score: number; label: string; 
 
 export default function AuthScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    mode?: string;
+    access_token?: string;
+    refresh_token?: string;
+  }>();
   const { signUp, signIn } = useAuth();
 
   const [step, setStep] = useState<Step>('choice');
@@ -46,11 +53,49 @@ export default function AuthScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [stayLoggedIn, setStayLoggedIn] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [showResetConfirmPassword, setShowResetConfirmPassword] = useState(false);
 
   const passwordStrength = getPasswordStrength(password);
+  const quickTrustPoints = ['Fast yes / no answers', 'Photo-first questions', 'Helpful comments'];
 
   const validateEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
   const validateUsername = (u: string) => /^[a-zA-Z0-9_]{3,20}$/.test(u);
+  const changeStep = (nextStep: Step) => {
+    setStep(nextStep);
+    setPassword('');
+    setConfirmPassword('');
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+    setResetPassword('');
+    setResetConfirmPassword('');
+    setShowResetPassword(false);
+    setShowResetConfirmPassword(false);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    const accessToken = typeof params.access_token === 'string' ? params.access_token : null;
+    const refreshToken = typeof params.refresh_token === 'string' ? params.refresh_token : null;
+    const mode = typeof params.mode === 'string' ? params.mode : null;
+
+    if (mode === 'reset' && accessToken && refreshToken) {
+      supabase.auth
+        .setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        })
+        .then(({ error }) => {
+          if (error) {
+            Alert.alert('Reset link issue', 'This password reset link is invalid or expired.');
+            return;
+          }
+          changeStep('reset');
+        });
+    }
+  }, [params.access_token, params.mode, params.refresh_token]);
 
   const handleRegister = async () => {
     if (!email.trim()) {
@@ -96,6 +141,10 @@ export default function AuthScreen() {
       Alert.alert('Error', 'Please enter your email');
       return;
     }
+    if (!validateEmail(email)) {
+      Alert.alert('Error', 'Please enter a valid email');
+      return;
+    }
     if (!password.trim()) {
       Alert.alert('Error', 'Please enter your password');
       return;
@@ -112,6 +161,69 @@ export default function AuthScreen() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      Alert.alert('Enter email', 'Add your account email first, then try again.');
+      return;
+    }
+
+    if (!validateEmail(email)) {
+      Alert.alert('Invalid email', 'Please enter a valid email address.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+        redirectTo: PASSWORD_RESET_REDIRECT,
+      });
+      if (error) {
+        Alert.alert('Reset failed', error.message);
+        return;
+      }
+      Alert.alert(
+        'Email sent',
+        'If this email exists, a password reset link has been sent. Make sure your Supabase redirect URLs allow the votioo app scheme.'
+      );
+    } catch (error: any) {
+      Alert.alert('Reset failed', error?.message || 'Could not send reset email.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (resetPassword.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters.');
+      return;
+    }
+
+    if (resetPassword !== resetConfirmPassword) {
+      Alert.alert('Error', 'Passwords do not match.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const { error } = await supabase.auth.updateUser({
+        password: resetPassword,
+      });
+
+      if (error) {
+        Alert.alert('Reset failed', error.message);
+        return;
+      }
+
+      Alert.alert('Password updated', 'Your password has been changed successfully.', [
+        { text: 'OK', onPress: () => changeStep('login') },
+      ]);
+    } catch (error: any) {
+      Alert.alert('Reset failed', error?.message || 'Could not update password.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -120,7 +232,7 @@ export default function AuthScreen() {
         {step !== 'choice' && (
           <TouchableOpacity
             style={styles.closeBtn}
-            onPress={() => setStep('choice')}
+            onPress={() => changeStep('choice')}
           >
             <Ionicons name="chevron-back" size={24} color={Colors.brand} />
           </TouchableOpacity>
@@ -133,20 +245,35 @@ export default function AuthScreen() {
           <>
             <Text style={styles.heading}>Welcome to Votioo</Text>
             <Text style={styles.subheading}>
-              Join thousands voting on questions that matter
+              Ask fast, honest questions and get real reactions in minutes.
             </Text>
+
+            <View style={styles.heroCard}>
+              <Text style={styles.heroTitle}>Built for quick decisions</Text>
+              <Text style={styles.heroBody}>
+                Snap a photo, add a short question, and let people vote without friction.
+              </Text>
+              <View style={styles.heroPoints}>
+                {quickTrustPoints.map((point) => (
+                  <View key={point} style={styles.heroPoint}>
+                    <Ionicons name="checkmark-circle" size={16} color={Colors.brand} />
+                    <Text style={styles.heroPointText}>{point}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
 
             <View style={styles.buttonGroup}>
               <TouchableOpacity
                 style={[styles.largeBtn, styles.primaryBtn]}
-                onPress={() => setStep('register')}
+                onPress={() => changeStep('register')}
               >
                 <Text style={styles.largeBtnText}>Create Account →</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.largeBtn, styles.secondaryBtn]}
-                onPress={() => setStep('login')}
+                onPress={() => changeStep('login')}
               >
                 <Text style={[styles.largeBtnText, { color: Colors.brand }]}>Sign In →</Text>
               </TouchableOpacity>
@@ -164,7 +291,7 @@ export default function AuthScreen() {
           <>
             <Text style={styles.heading}>Create Account</Text>
             <Text style={styles.subheading}>
-              Sign up to start voting and asking questions
+              Create your profile and start asking better questions.
             </Text>
 
             <View style={styles.form}>
@@ -281,6 +408,10 @@ export default function AuthScreen() {
                   <Text style={styles.largeBtnText}>Create Account →</Text>
                 )}
               </TouchableOpacity>
+
+              <TouchableOpacity onPress={() => changeStep('login')}>
+                <Text style={styles.switchLink}>Already have an account? Sign in</Text>
+              </TouchableOpacity>
             </View>
           </>
         )}
@@ -289,7 +420,7 @@ export default function AuthScreen() {
           <>
             <Text style={styles.heading}>Sign In</Text>
             <Text style={styles.subheading}>
-              Welcome back! Sign in to your account
+              Welcome back. Pick up where you left off.
             </Text>
 
             <View style={styles.form}>
@@ -347,6 +478,10 @@ export default function AuthScreen() {
                 <Text style={styles.checkboxLabel}>Keep me signed in</Text>
               </Pressable>
 
+              <Text style={styles.sessionHint}>
+                Best on your personal phone. You can sign out anytime from Profile.
+              </Text>
+
               <TouchableOpacity
                 style={[styles.largeBtn, styles.primaryBtn, styles.submitBtn, loading && { opacity: 0.6 }]}
                 onPress={handleLogin}
@@ -359,8 +494,83 @@ export default function AuthScreen() {
                 )}
               </TouchableOpacity>
 
-              <TouchableOpacity onPress={() => Alert.alert('Coming Soon', 'Password reset will be available soon')}>
+              <TouchableOpacity onPress={handleForgotPassword}>
                 <Text style={styles.forgotLink}>Forgot password?</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={() => changeStep('register')}>
+                <Text style={styles.switchLink}>New here? Create an account</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {step === 'reset' && (
+          <>
+            <Text style={styles.heading}>Set New Password</Text>
+            <Text style={styles.subheading}>
+              Choose a strong new password and get back into your account.
+            </Text>
+
+            <View style={styles.form}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>New Password</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="lock-closed-outline" size={18} color={Colors.textTertiary} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="••••••••"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={resetPassword}
+                    onChangeText={setResetPassword}
+                    secureTextEntry={!showResetPassword}
+                    autoCapitalize="none"
+                    editable={!loading}
+                  />
+                  <TouchableOpacity onPress={() => setShowResetPassword(!showResetPassword)}>
+                    <Ionicons
+                      name={showResetPassword ? 'eye-outline' : 'eye-off-outline'}
+                      size={18}
+                      color={Colors.textTertiary}
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Confirm New Password</Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="lock-closed-outline" size={18} color={Colors.textTertiary} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="••••••••"
+                    placeholderTextColor={Colors.textTertiary}
+                    value={resetConfirmPassword}
+                    onChangeText={setResetConfirmPassword}
+                    secureTextEntry={!showResetConfirmPassword}
+                    autoCapitalize="none"
+                    editable={!loading}
+                  />
+                  <TouchableOpacity onPress={() => setShowResetConfirmPassword(!showResetConfirmPassword)}>
+                    <Ionicons
+                      name={showResetConfirmPassword ? 'eye-outline' : 'eye-off-outline'}
+                      size={18}
+                      color={Colors.textTertiary}
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.largeBtn, styles.primaryBtn, styles.submitBtn, loading && { opacity: 0.6 }]}
+                onPress={handleResetPassword}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.largeBtnText}>Save New Password</Text>
+                )}
               </TouchableOpacity>
             </View>
           </>
@@ -411,8 +621,42 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     textAlign: 'center',
     lineHeight: 22,
-    marginBottom: 32,
+    marginBottom: 24,
     paddingHorizontal: 16,
+  },
+  heroCard: {
+    width: '100%',
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    padding: 18,
+    marginBottom: 28,
+    gap: 10,
+  },
+  heroTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: Colors.text,
+  },
+  heroBody: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: Colors.textSecondary,
+  },
+  heroPoints: {
+    gap: 8,
+    marginTop: 4,
+  },
+  heroPoint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  heroPointText: {
+    fontSize: 13,
+    color: Colors.text,
+    fontWeight: '600',
   },
   buttonGroup: {
     width: '100%',
@@ -514,6 +758,12 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontWeight: '500',
   },
+  sessionHint: {
+    marginTop: -8,
+    fontSize: 12,
+    lineHeight: 18,
+    color: Colors.textTertiary,
+  },
   submitBtn: {
     marginTop: 8,
     height: 60,
@@ -524,6 +774,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
     marginTop: 8,
+  },
+  switchLink: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 4,
   },
   legal: {
     marginTop: 32,

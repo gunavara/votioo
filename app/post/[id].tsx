@@ -7,7 +7,6 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,7 +17,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Radius } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
+import { devError, devLog } from '../../lib/devLog';
+import { fetchAvatarUrls } from '../../lib/profileLookup';
+import { reportPost } from '../../lib/reports';
 import { supabase } from '../../lib/supabase';
+import { fetchUserVote, submitVote } from '../../lib/votes';
 
 interface PostData {
   id: string;
@@ -29,6 +32,7 @@ interface PostData {
   username_snapshot: string;
   created_at: string;
   post_images?: Array<{ image_url: string; sort_order: number }>;
+  avatar_url?: string | null;
 }
 
 interface CommentData {
@@ -36,8 +40,9 @@ interface CommentData {
   post_id: string;
   user_id?: string;
   username_snapshot: string;
-  comment_text: string;
+  text: string;
   created_at: string;
+  avatar_url?: string | null;
 }
 
 function timeAgo(dateStr: string): string {
@@ -63,6 +68,56 @@ export default function PostDetailScreen() {
   const [comment, setComment] = useState('');
   const [comments, setComments] = useState<CommentData[]>([]);
   const [submittingComment, setSubmittingComment] = useState(false);
+  const [hasReported, setHasReported] = useState(false);
+
+  const openReportFlow = () => {
+    if (!user) {
+      Alert.alert('Sign in required', 'You need to sign in to report a post.');
+      return;
+    }
+
+    if (hasReported) {
+      Alert.alert('Already reported', 'You have already reported this post.');
+      return;
+    }
+
+    if (post?.user_id === user.id) {
+      Alert.alert('Not allowed', 'You cannot report your own post.');
+      return;
+    }
+
+    Alert.alert('Report post', 'Why are you reporting this post?', [
+      { text: 'Spam', onPress: () => handleReport('Spam or advertising') },
+      { text: 'Harassment', onPress: () => handleReport('Harassment or abuse') },
+      { text: 'Inappropriate', onPress: () => handleReport('Inappropriate content') },
+      { text: 'Misleading', onPress: () => handleReport('Misleading or low-quality content') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const handleReport = async (reason: string) => {
+    if (!user || !post) return;
+
+    try {
+      const result = await reportPost({
+        reporterUserId: user.id,
+        postId: post.id,
+        reason,
+      });
+
+      if (result.alreadyReported) {
+        setHasReported(true);
+        Alert.alert('Already reported', 'You have already reported this post.');
+        return;
+      }
+
+      setHasReported(true);
+      Alert.alert('Report submitted', 'Thanks. We will review this post.');
+    } catch (error) {
+      devError('Report error:', error);
+      Alert.alert('Error', 'Failed to submit report.');
+    }
+  };
 
   // Fetch post data
   useEffect(() => {
@@ -83,15 +138,18 @@ export default function PostDetailScreen() {
         .single();
 
       if (error) {
-        console.log('❌ Error fetching post:', error);
+        devError('Error fetching post:', error);
         Alert.alert('Error', 'Failed to load post');
         return;
       }
 
-      setPost(data as PostData);
-      console.log('✅ Post loaded:', data);
+      const avatarUrls = await fetchAvatarUrls([data.user_id]);
+      setPost({
+        ...(data as PostData),
+        avatar_url: avatarUrls.get(data.user_id) ?? null,
+      });
     } catch (error: any) {
-      console.log('❌ Error:', error);
+      devError('Post fetch error:', error);
     } finally {
       setLoading(false);
     }
@@ -106,13 +164,18 @@ export default function PostDetailScreen() {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.log('❌ Error fetching comments:', error);
+        devError('Error fetching comments:', error);
         return;
       }
-
-      setComments(data as CommentData[]);
+      const avatarUrls = await fetchAvatarUrls(data?.map((comment: any) => comment.user_id) ?? []);
+      setComments(
+        ((data ?? []) as CommentData[]).map((comment) => ({
+          ...comment,
+          avatar_url: comment.user_id ? avatarUrls.get(comment.user_id) ?? null : null,
+        }))
+      );
     } catch (error: any) {
-      console.log('❌ Error:', error);
+      devError('Comments fetch error:', error);
     }
   };
 
@@ -124,7 +187,7 @@ export default function PostDetailScreen() {
         .eq('post_id', id);
 
       if (error) {
-        console.log('❌ Error fetching votes:', error);
+        devError('Error fetching votes:', error);
         return;
       }
 
@@ -132,8 +195,15 @@ export default function PostDetailScreen() {
       const noVotes = data?.filter((v) => v.vote_type === 'no').length || 0;
       setYesCt(yesVotes);
       setNoCt(noVotes);
+
+      if (user) {
+        const existingVote = await fetchUserVote(String(id), user.id);
+        setLocalVote(existingVote);
+      } else {
+        setLocalVote(null);
+      }
     } catch (error: any) {
-      console.log('❌ Error:', error);
+      devError('Votes fetch error:', error);
     }
   };
 
@@ -144,31 +214,15 @@ export default function PostDetailScreen() {
     }
 
     try {
-      // Check if user already voted
-      const { data: existingVote, error: checkError } = await supabase
-        .from('votes')
-        .select('id')
-        .eq('post_id', id)
-        .eq('user_id', user.id)
-        .single();
+      const result = await submitVote({
+        postId: String(id),
+        userId: user.id,
+        vote,
+      });
 
-      if (existingVote) {
+      if (result.alreadyVoted) {
         Alert.alert('Error', 'You have already voted on this post');
-        return;
-      }
-
-      // Insert vote
-      const { error } = await supabase
-        .from('votes')
-        .insert({
-          post_id: id,
-          user_id: user.id,
-          vote_type: vote,
-        });
-
-      if (error) {
-        console.log('❌ Vote error:', error);
-        Alert.alert('Error', 'Failed to vote');
+        await fetchVotes();
         return;
       }
 
@@ -178,8 +232,9 @@ export default function PostDetailScreen() {
       } else {
         setNoCt((c) => c + 1);
       }
+
     } catch (error: any) {
-      console.log('❌ Error:', error);
+      devError('Vote submit error:', error);
       Alert.alert('Error', 'Failed to vote');
     }
   };
@@ -204,19 +259,20 @@ export default function PostDetailScreen() {
           post_id: id,
           user_id: user.id,
           username_snapshot: profile?.username || user.email?.split('@')[0] || 'user',
-          comment_text: comment.trim(),
+          text: comment.trim(),
         });
 
       if (error) {
-        console.log('❌ Comment error:', error);
+        devError('Comment error:', error);
         Alert.alert('Error', 'Failed to post comment');
         return;
       }
 
       setComment('');
       await fetchComments();
+
     } catch (error: any) {
-      console.log('❌ Error:', error);
+      devError('Comment submit error:', error);
       Alert.alert('Error', 'Failed to post comment');
     } finally {
       setSubmittingComment(false);
@@ -225,7 +281,7 @@ export default function PostDetailScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={Colors.brand} />
         </View>
@@ -235,7 +291,7 @@ export default function PostDetailScreen() {
 
   if (!post) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Post not found</Text>
           <TouchableOpacity
@@ -252,192 +308,192 @@ export default function PostDetailScreen() {
   const total = yesCt + noCt;
   const yesPercent = total > 0 ? Math.round((yesCt / total) * 100) : 50;
   const noPercent = 100 - yesPercent;
-  const yesLeading = yesCt >= noCt;
-
   const images = post.post_images?.sort((a, b) => a.sort_order - b.sort_order) || [];
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.keyboardView}
+      behavior="padding"
+      keyboardVerticalOffset={72}
     >
-      <SafeAreaView style={styles.safe}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Back button */}
-          <TouchableOpacity style={styles.backButtonRow} onPress={() => router.back()}>
-            <Ionicons name="chevron-back" size={24} color={Colors.text} />
-            <Text style={styles.backButtonText}>Back</Text>
-          </TouchableOpacity>
-
+      <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+        >
           {/* Post author */}
-          <View style={styles.authorRow}>
-            <View style={styles.avatar}>
-              {post.user_id ? (
-                <Image
-                  source={{
-                    uri: `https://whaxkumefdykypunpoxf.supabase.co/storage/v1/object/public/avatars/${post.user_id}/avatar.jpg`,
-                  }}
-                  style={styles.avatarImage}
-                  onError={() => {
-                    console.log('Avatar load error, falling back to letter');
-                  }}
-                />
-              ) : (
-                <Text style={styles.avatarText}>
-                  {post.username_snapshot[0].toUpperCase()}
-                </Text>
-              )}
-            </View>
-
-            <View>
-              <Text style={styles.username}>@{post.username_snapshot}</Text>
-              <Text style={styles.time}>{timeAgo(post.created_at)}</Text>
-            </View>
-            <View style={{ flex: 1 }} />
-            <TouchableOpacity style={styles.reportBtn}>
-              <Ionicons name="flag-outline" size={18} color={Colors.textTertiary} />
-            </TouchableOpacity>
-          </View>
-
-          {/* Categories */}
-          <View style={styles.catRow}>
-            {post.primary_category && (
-              <View style={styles.category}>
-                <Text style={styles.categoryText}>{post.primary_category}</Text>
-              </View>
-            )}
-            {post.secondary_category && (
-              <View style={styles.category}>
-                <Text style={styles.categoryText}>{post.secondary_category}</Text>
-              </View>
-            )}
-          </View>
-
-          {/* Question text */}
-          <Text style={styles.question}>{post.question_text}</Text>
-
-          {/* Images carousel */}
-          {images.length > 0 && (
-            <View style={styles.imagesContainer}>
-              <FlatList
-                data={images}
-                renderItem={({ item }) => (
+          <View style={styles.postCard}>
+            <View style={styles.authorRow}>
+              <View style={styles.avatar}>
+                {post.avatar_url ? (
                   <Image
-                    source={{ uri: item.image_url }}
-                    style={styles.image}
-                    onError={(error) => {
-                      console.log('❌ Image load error:', error);
+                    source={{
+                      uri: post.avatar_url,
                     }}
+                    style={styles.avatarImage}
+                    onError={() => devLog('Avatar load error, falling back to letter')}
                   />
+                ) : (
+                  <Text style={styles.avatarText}>
+                    {post.username_snapshot[0].toUpperCase()}
+                  </Text>
                 )}
-                keyExtractor={(item, index) => index.toString()}
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-              />
-              {images.length > 1 && (
-                <Text style={styles.imageCount}>{images.length} photos</Text>
+              </View>
+
+              <View>
+                <Text style={styles.username}>@{post.username_snapshot}</Text>
+                <Text style={styles.time}>{timeAgo(post.created_at)}</Text>
+              </View>
+              <View style={{ flex: 1 }} />
+              <TouchableOpacity style={styles.reportBtn} onPress={openReportFlow}>
+                <Ionicons name="flag-outline" size={18} color={Colors.textTertiary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.catRow}>
+              {post.primary_category && (
+                <TouchableOpacity
+                  style={styles.category}
+                  activeOpacity={0.8}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/(tabs)/categories',
+                      params: { category: post.primary_category },
+                    })
+                  }
+                >
+                  <Text style={styles.categoryText}>{post.primary_category}</Text>
+                </TouchableOpacity>
+              )}
+              {post.secondary_category && (
+                <TouchableOpacity
+                  style={styles.category}
+                  activeOpacity={0.8}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/(tabs)/categories',
+                      params: { category: post.secondary_category as string },
+                    })
+                  }
+                >
+                  <Text style={styles.categoryText}>{post.secondary_category}</Text>
+                </TouchableOpacity>
               )}
             </View>
-          )}
 
-          {/* Vote buttons */}
-          <View style={styles.voteContainer}>
-            <TouchableOpacity
-              style={[
-                styles.voteBtn,
-                styles.yesBtn,
-                localVote === 'yes' && styles.votedYes,
-              ]}
-              onPress={() => handleVote('yes')}
-              disabled={!!localVote}
-            >
-              <Text style={styles.voteBtnEmoji}>👍</Text>
-              <Text style={styles.voteBtnText}>Yes {yesPercent}%</Text>
-            </TouchableOpacity>
+            <Text style={styles.question}>{post.question_text}</Text>
 
-            <TouchableOpacity
-              style={[
-                styles.voteBtn,
-                styles.noBtn,
-                localVote === 'no' && styles.votedNo,
-              ]}
-              onPress={() => handleVote('no')}
-              disabled={!!localVote}
-            >
-              <Text style={styles.voteBtnEmoji}>👎</Text>
-              <Text style={styles.voteBtnText}>No {noPercent}%</Text>
-            </TouchableOpacity>
-          </View>
+            {images.length > 0 && (
+              <View style={styles.imagesContainer}>
+                <FlatList
+                  data={images}
+                  renderItem={({ item }) => (
+                    <Image
+                      source={{ uri: item.image_url }}
+                      style={styles.image}
+                      onError={(error) => devLog('Image load error:', error)}
+                    />
+                  )}
+                  keyExtractor={(item, index) => index.toString()}
+                  horizontal
+                  pagingEnabled
+                  showsHorizontalScrollIndicator={false}
+                />
+                {images.length > 1 && (
+                  <Text style={styles.imageCount}>{images.length} photos</Text>
+                )}
+              </View>
+            )}
 
-          {/* Vote bar */}
-          <View style={styles.voteBar}>
-            <View
-              style={[
-                styles.voteBarSegment,
-                { width: `${yesPercent}%`, backgroundColor: '#10B981' },
-              ]}
-            />
-            <View
-              style={[
-                styles.voteBarSegment,
-                { width: `${noPercent}%`, backgroundColor: '#EF4444' },
-              ]}
-            />
-          </View>
+            <View style={styles.voteContainer}>
+              <TouchableOpacity
+                style={[
+                  styles.voteBtn,
+                  styles.yesBtn,
+                  localVote === 'yes' && styles.votedYes,
+                ]}
+                onPress={() => handleVote('yes')}
+                disabled={!!localVote}
+              >
+                <Text style={styles.voteBtnEmoji}>👍</Text>
+                <Text style={styles.voteBtnText}>Yes {yesPercent}%</Text>
+              </TouchableOpacity>
 
-          {/* Vote counts */}
-          <View style={styles.voteCounts}>
-            <Text style={styles.voteCountText}>
-              <Text style={styles.voteCountNumber}>{yesCt}</Text> Yes
-            </Text>
-            <Text style={styles.voteCountText}>
-              <Text style={styles.voteCountNumber}>{noCt}</Text> No
-            </Text>
+              <TouchableOpacity
+                style={[
+                  styles.voteBtn,
+                  styles.noBtn,
+                  localVote === 'no' && styles.votedNo,
+                ]}
+                onPress={() => handleVote('no')}
+                disabled={!!localVote}
+              >
+                <Text style={styles.voteBtnEmoji}>👎</Text>
+                <Text style={styles.voteBtnText}>No {noPercent}%</Text>
+              </TouchableOpacity>
+            </View>
+
+            {total > 0 ? (
+              <>
+                <View style={styles.voteBar}>
+                  <View
+                    style={[
+                      styles.voteBarSegment,
+                      { width: `${yesPercent}%`, backgroundColor: '#10B981' },
+                    ]}
+                  />
+                  <View
+                    style={[
+                      styles.voteBarSegment,
+                      { width: `${noPercent}%`, backgroundColor: '#EF4444' },
+                    ]}
+                  />
+                </View>
+
+                <View style={styles.voteSummaryRow}>
+                  <View style={styles.voteStatPill}>
+                    <View style={[styles.voteStatDot, styles.voteStatDotYes]} />
+                    <Text style={styles.voteStatText}>
+                      <Text style={styles.voteStatNumber}>{yesCt}</Text> yes
+                    </Text>
+                  </View>
+                  <View style={styles.voteStatPill}>
+                    <View style={[styles.voteStatDot, styles.voteStatDotNo]} />
+                    <Text style={styles.voteStatText}>
+                      <Text style={styles.voteStatNumber}>{noCt}</Text> no
+                    </Text>
+                  </View>
+                  <Text style={styles.totalVotesText}>{total} total votes</Text>
+                </View>
+              </>
+            ) : (
+              <View style={styles.noVotesState}>
+                <Text style={styles.noVotesTitle}>No votes yet</Text>
+                <Text style={styles.noVotesText}>Be the first to give a quick opinion.</Text>
+              </View>
+            )}
           </View>
 
           {/* Comments section */}
           <View style={styles.commentsSection}>
             <Text style={styles.commentsTitle}>Comments ({comments.length})</Text>
 
-            {/* Comment input */}
-            <View style={styles.commentInputContainer}>
-              <TextInput
-                style={styles.commentInput}
-                placeholder="Add a comment..."
-                placeholderTextColor={Colors.textTertiary}
-                value={comment}
-                onChangeText={setComment}
-                multiline
-                editable={!submittingComment}
-              />
-              <TouchableOpacity
-                style={[
-                  styles.commentSubmitBtn,
-                  (!comment.trim() || submittingComment) && styles.commentSubmitBtnDisabled,
-                ]}
-                onPress={handleComment}
-                disabled={!comment.trim() || submittingComment}
-              >
-                <Ionicons
-                  name="send"
-                  size={20}
-                  color={comment.trim() && !submittingComment ? 'white' : Colors.textTertiary}
-                />
-              </TouchableOpacity>
-            </View>
-
             {/* Comments list */}
             {comments.length === 0 ? (
-              <Text style={styles.noCommentsText}>No comments yet. Be the first!</Text>
+              <View style={styles.commentsEmptyState}>
+                <Text style={styles.noCommentsText}>No comments yet</Text>
+                <Text style={styles.noCommentsSubtext}>Be the first to help with an opinion.</Text>
+              </View>
             ) : (
               comments.map((c) => (
                 <View key={c.id} style={styles.commentItem}>
-                  {c.user_id ? (
+                  {c.avatar_url ? (
                     <View style={styles.commentAvatarContainer}>
                       <Image
                         source={{
-                          uri: `https://whaxkumefdykypunpoxf.supabase.co/storage/v1/object/public/avatars/${c.user_id}/avatar.jpg`,
+                          uri: c.avatar_url,
                         }}
                         style={styles.commentAvatarImage}
                       />
@@ -454,13 +510,44 @@ export default function PostDetailScreen() {
                       <Text style={styles.commentUsername}>@{c.username_snapshot}</Text>
                       <Text style={styles.commentTime}>{timeAgo(c.created_at)}</Text>
                     </View>
-                    <Text style={styles.commentText}>{c.comment_text}</Text>
+                    <Text style={styles.commentText}>{c.text}</Text>
                   </View>
                 </View>
               ))
             )}
           </View>
         </ScrollView>
+        <View style={styles.commentComposerDock}>
+          <View style={styles.commentInputContainer}>
+            <TextInput
+              style={styles.commentInput}
+              placeholder="Add a comment..."
+              placeholderTextColor={Colors.textTertiary}
+              value={comment}
+              onChangeText={setComment}
+              multiline
+              editable={!submittingComment}
+              textAlignVertical="top"
+              autoCorrect
+              autoCapitalize="sentences"
+              scrollEnabled={false}
+            />
+            <TouchableOpacity
+              style={[
+                styles.commentSubmitBtn,
+                (!comment.trim() || submittingComment) && styles.commentSubmitBtnDisabled,
+              ]}
+              onPress={handleComment}
+              disabled={!comment.trim() || submittingComment}
+            >
+              <Ionicons
+                name="send"
+                size={20}
+                color={comment.trim() && !submittingComment ? 'white' : Colors.textTertiary}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
       </SafeAreaView>
     </KeyboardAvoidingView>
   );
@@ -477,13 +564,17 @@ interface AvatarStyle {
 }
 
 const styles = StyleSheet.create({
+  keyboardView: {
+    flex: 1,
+  },
   safe: {
     flex: 1,
     backgroundColor: Colors.background,
   },
   content: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingTop: 10,
+    paddingBottom: 132,
   },
   loadingContainer: {
     flex: 1,
@@ -500,17 +591,6 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginBottom: 16,
   },
-  backButtonRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-    gap: 4,
-  },
-  backButtonText: {
-    fontSize: 16,
-    color: Colors.text,
-    fontWeight: '500',
-  },
   backBtn: {
     backgroundColor: Colors.brand,
     paddingVertical: 10,
@@ -521,10 +601,18 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: '600',
   },
+  postCard: {
+    backgroundColor: Colors.card,
+    borderRadius: Radius.lg,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: 10,
+  },
   authorRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
     gap: 12,
   },
   avatar: {
@@ -561,7 +649,7 @@ const styles = StyleSheet.create({
   catRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 10,
     flexWrap: 'wrap',
   },
   category: {
@@ -576,21 +664,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   question: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: Colors.text,
-    marginBottom: 16,
-    lineHeight: 24,
+    marginBottom: 12,
+    lineHeight: 22,
   },
   imagesContainer: {
-    marginBottom: 16,
+    marginBottom: 12,
     borderRadius: Radius.lg,
     overflow: 'hidden',
     backgroundColor: Colors.surface,
   },
   image: {
-    width: 300,
-    height: 300,
+    width: 284,
+    height: 284,
     marginRight: 8,
   },
   imageCount: {
@@ -608,7 +696,7 @@ const styles = StyleSheet.create({
   voteContainer: {
     flexDirection: 'row',
     gap: 12,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   voteBtn: {
     flex: 1,
@@ -616,9 +704,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderRadius: Radius.lg,
-    borderWidth: 2,
+    borderWidth: 1.5,
   },
   yesBtn: {
     borderColor: '#10B981',
@@ -635,10 +723,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#EF4444',
   },
   voteBtnEmoji: {
-    fontSize: 20,
+    fontSize: 18,
   },
   voteBtnText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: Colors.text,
   },
@@ -653,24 +741,64 @@ const styles = StyleSheet.create({
   voteBarSegment: {
     height: '100%',
   },
-  voteCounts: {
+  voteSummaryRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 24,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    marginTop: 10,
   },
-  voteCountText: {
-    fontSize: 14,
+  voteStatPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.background,
+  },
+  voteStatDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  voteStatDotYes: {
+    backgroundColor: '#10B981',
+  },
+  voteStatDotNo: {
+    backgroundColor: '#EF4444',
+  },
+  voteStatText: {
+    fontSize: 13,
     color: Colors.textSecondary,
   },
-  voteCountNumber: {
+  voteStatNumber: {
     fontWeight: '700',
     color: Colors.text,
   },
+  totalVotesText: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+    marginLeft: 'auto',
+  },
+  noVotesState: {
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 2,
+  },
+  noVotesTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  noVotesText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginTop: 4,
+  },
   commentsSection: {
-    marginTop: 12,
+    marginTop: 6,
+    marginBottom: 8,
   },
   commentsTitle: {
     fontSize: 16,
@@ -678,22 +806,35 @@ const styles = StyleSheet.create({
     color: Colors.text,
     marginBottom: 12,
   },
+  commentComposerDock: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 12,
+    backgroundColor: Colors.background,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
   commentInputContainer: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 16,
     alignItems: 'flex-end',
+    backgroundColor: Colors.card,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 10,
   },
   commentInput: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: Colors.border,
     borderRadius: Radius.md,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
     fontSize: 14,
     color: Colors.text,
-    maxHeight: 100,
+    backgroundColor: Colors.surface,
+    minHeight: 46,
+    maxHeight: 120,
+    lineHeight: 20,
   },
   commentSubmitBtn: {
     width: 40,
@@ -707,10 +848,19 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.border,
   },
   noCommentsText: {
-    fontSize: 14,
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
+  noCommentsSubtext: {
+    fontSize: 13,
     color: Colors.textTertiary,
     textAlign: 'center',
-    marginVertical: 20,
+    marginTop: 6,
+  },
+  commentsEmptyState: {
+    paddingVertical: 20,
   },
   commentItem: {
     flexDirection: 'row',

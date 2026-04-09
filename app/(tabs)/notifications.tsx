@@ -1,4 +1,5 @@
-import React from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import React, { useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,44 +10,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Radius, Shadow } from '../../constants/theme';
 import { useRouter } from 'expo-router';
-
-const MOCK_NOTIFICATIONS = [
-  {
-    id: '1',
-    type: 'first_vote',
-    message: 'Your question got its first vote!',
-    time: '2m ago',
-    read: false,
-    postId: '1',
-  },
-  {
-    id: '2',
-    type: 'comment',
-    message: '@techgeek99 commented on your question.',
-    time: '15m ago',
-    read: false,
-    postId: '1',
-  },
-  {
-    id: '3',
-    type: 'milestone',
-    message: 'Your question reached 25 votes! 🎉',
-    time: '1h ago',
-    read: true,
-    postId: '2',
-  },
-  {
-    id: '4',
-    type: 'comment',
-    message: '@nina_v commented on your question.',
-    time: '3h ago',
-    read: true,
-    postId: '3',
-  },
-];
+import { useNotifications } from '../../context/NotificationsContext';
 
 const notifIcon = (type: string) => {
-  if (type === 'first_vote') return '👍';
+  if (type === 'vote') return '👍';
   if (type === 'comment') return '💬';
   if (type === 'milestone') return '🏆';
   if (type === 'moderation') return '⚠️';
@@ -55,31 +22,59 @@ const notifIcon = (type: string) => {
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  const { notifications, unreadCount, markAllRead, markOneRead } = useNotifications();
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        if (unreadCount > 0) {
+          markAllRead();
+        }
+      };
+    }, [markAllRead, unreadCount])
+  );
 
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
+        <Text style={styles.eyebrow}>Updates</Text>
         <Text style={styles.title}>Notifications</Text>
+        <Text style={styles.subtitle}>
+          {unreadCount > 0
+            ? `${unreadCount} new ${unreadCount === 1 ? 'alert' : 'alerts'} waiting`
+            : 'Votes and comments on your questions will show up here'}
+        </Text>
       </View>
 
       <FlatList
-        data={MOCK_NOTIFICATIONS}
+        data={notifications}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
         renderItem={({ item }) => (
           <TouchableOpacity
-            style={[styles.item, !item.read && styles.itemUnread]}
-            onPress={() => router.push(`/post/${item.postId}`)}
+            style={[styles.item, !item.is_read && styles.itemUnread]}
+            onPress={async () => {
+              await markOneRead(item.id);
+              if (item.reference_id) {
+                router.push(`/post/${item.reference_id}`);
+              }
+            }}
           >
+            {!item.is_read && <View style={styles.unreadAccent} />}
             <View style={styles.iconWrap}>
               <Text style={styles.icon}>{notifIcon(item.type)}</Text>
             </View>
             <View style={styles.itemContent}>
-              <Text style={styles.itemMessage}>{item.message}</Text>
-              <Text style={styles.itemTime}>{item.time}</Text>
+              <Text style={[styles.itemMessage, item.is_read && styles.itemMessageRead]}>
+                {item.message}
+              </Text>
+              <View style={styles.itemMeta}>
+                <Text style={styles.itemTime}>{new Date(item.created_at).toLocaleString()}</Text>
+                {!item.is_read && <Text style={styles.unreadLabel}>New</Text>}
+              </View>
             </View>
-            {!item.read && <View style={styles.dot} />}
+            {!item.is_read && <View style={styles.dot} />}
           </TouchableOpacity>
         )}
         ListEmptyComponent={
@@ -103,15 +98,29 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 16,
     backgroundColor: Colors.card,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
+  },
+  eyebrow: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.textTertiary,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 6,
   },
   title: {
     fontSize: 22,
     fontWeight: '800',
     color: Colors.text,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginTop: 4,
+    lineHeight: 18,
   },
   list: {
     padding: 16,
@@ -124,10 +133,22 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     padding: 14,
     marginBottom: 10,
+    position: 'relative',
+    overflow: 'hidden',
     ...Shadow.card,
   },
   itemUnread: {
-    backgroundColor: '#F5F3FF',
+    backgroundColor: '#F6F3FF',
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+  },
+  unreadAccent: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
+    backgroundColor: Colors.brand,
   },
   iconWrap: {
     width: 44,
@@ -146,14 +167,32 @@ const styles = StyleSheet.create({
   },
   itemMessage: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
     color: Colors.text,
     lineHeight: 20,
+  },
+  itemMessageRead: {
+    fontWeight: '600',
+    color: Colors.textSecondary,
   },
   itemTime: {
     fontSize: 12,
     color: Colors.textTertiary,
-    marginTop: 3,
+  },
+  itemMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+  },
+  unreadLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.brand,
+    backgroundColor: Colors.brandLight,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radius.full,
   },
   dot: {
     width: 8,
@@ -164,7 +203,7 @@ const styles = StyleSheet.create({
   },
   empty: {
     alignItems: 'center',
-    paddingTop: 80,
+    paddingTop: 96,
     paddingHorizontal: 32,
   },
   emptyIcon: {
